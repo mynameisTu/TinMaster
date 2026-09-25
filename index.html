@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TinMaster - Hệ thống Luyện thi Tin học THPT Thích ứng</title>
+    <meta name="description" content="Hệ thống luyện thi tốt nghiệp THPT môn Tin học với động cơ thích ứng, phân tích hành vi thời gian thực và bản đồ tri thức." />
+    <meta property="og:title" content="TinMaster - Hệ thống Luyện thi Tin học THPT Thích ứng" />
+    <meta property="og:description" content="Hệ thống luyện thi tốt nghiệp THPT môn Tin học với động cơ thích ứng, phân tích hành vi thời gian thực và bản đồ tri thức." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Defensive fix for environments where window.fetch has only a getter on Window.prototype
+      (function() {
+        try {
+          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
+          var currentFetch = originalFetch;
+
+          function getFetch() {
+            return currentFetch;
+          }
+          function setFetch(fn) {
+            currentFetch = fn;
+          }
+
+          // 1. Attach setter to Window.prototype if accessible
+          if (typeof Window !== 'undefined' && Window.prototype) {
+            try {
+              Object.defineProperty(Window.prototype, 'fetch', {
+                get: getFetch,
+                set: setFetch,
+                configurable: true,
+                enumerable: true
+              });
+            } catch (e) {}
+          }
+
+          // 2. Attach setter along the prototype chain of window
+          var p = window;
+          while (p) {
+            try {
+              var desc = Object.getOwnPropertyDescriptor(p, 'fetch');
+              if (desc && (desc.configurable || !desc.set)) {
+                Object.defineProperty(p, 'fetch', {
+                  get: getFetch,
+                  set: setFetch,
+                  configurable: true,
+                  enumerable: true
+                });
+              }
+            } catch (e) {}
+            p = Object.getPrototypeOf(p);
+          }
+
+          // 3. Define directly on window
+          try {
+            Object.defineProperty(window, 'fetch', {
+              get: getFetch,
+              set: setFetch,
+              configurable: true,
+              enumerable: true
+            });
+          } catch (e) {}
+        } catch (err) {}
+
+        // 4. Suppress unhandled TypeError if environment attempts illegal assignment
+        window.addEventListener('error', function(event) {
+          if (event && event.message && event.message.indexOf("Cannot set property fetch") !== -1) {
+            if (event.preventDefault) event.preventDefault();
+            if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

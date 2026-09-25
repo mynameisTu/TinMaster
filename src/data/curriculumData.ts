@@ -1,0 +1,511 @@
+import { ConceptNode, ExamBlueprint, StudentMastery } from '../types';
+
+export const CONCEPTS_LIST: ConceptNode[] = [
+  // =========================================================================
+  // LỚP 12 - SÁCH GIÁO KHOA TIN HỌC 12 (KẾT NỐI TRI THỨC VỚI CUỘC SỐNG - ĐỊNH HƯỚNG TIN HỌC ỨNG DỤNG & CỐT LÕI)
+  // =========================================================================
+
+  // CHỦ ĐỀ 1: MÁY TÍNH VÀ XÃ HỘI TRI THỨC - TRÍ TUỆ NHÂN TẠO (BÀI 1 & BÀI 2)
+  {
+    id: 'CS12_AI_CONCEPTS',
+    topicId: 'AI_FUNDAMENTALS',
+    topicName: 'Trí tuệ nhân tạo (AI) & Đời sống (Tin 12 - Chủ đề 1)',
+    name: 'Khái niệm, Đặc trưng & Lịch sử AI',
+    grade: 12,
+    strand: 'CS',
+    description: 'Khái niệm AI, phép thử Turing (1950), hội thảo Dartmouth (1956), các đặc trưng (học, suy luận, nhận thức, hiểu ngôn ngữ, giải quyết vấn đề), phân loại AI hẹp (yếu) và AI tổng quát (mạnh).',
+    prerequisites: [],
+    importanceWeight: 0.95,
+    subconcepts: ['Định nghĩa & Phép thử Turing 1950', 'Hội thảo Dartmouth 1956', '5 Đặc trưng của AI', 'Phân loại AI hẹp & AI tổng quát'],
+  },
+  {
+    id: 'CS12_AI_APPLICATIONS',
+    topicId: 'AI_FUNDAMENTALS',
+    topicName: 'Trí tuệ nhân tạo (AI) & Đời sống (Tin 12 - Chủ đề 1)',
+    name: 'Ứng dụng, AI tạo sinh & Cảnh báo đạo đức',
+    grade: 12,
+    strand: 'CS',
+    description: 'Ứng dụng thực tiễn: Hệ chuyên gia MYCIN, Robot Asimo, Google Translate, nhận diện khuôn mặt, chữ viết tay, trợ lý ảo, IBM Watson; AI tạo sinh (Generative AI, ChatGPT của OpenAI); Rủi ro việc làm, quyền riêng tư, hộp đen, an ninh.',
+    prerequisites: ['CS12_AI_CONCEPTS'],
+    importanceWeight: 0.9,
+    subconcepts: ['Hệ chuyên gia MYCIN & Robot Asimo', 'Nhận diện & Trợ lý ảo', 'AI tạo sinh ChatGPT & OpenAI', 'Rủi ro hộp đen & Đạo đức AI'],
+  },
+
+  // CHỦ ĐỀ 2: MẠNG MÁY TÍNH VÀ INTERNET (BÀI 3, 4, 5)
+  {
+    id: 'CS12_NETWORK_DEVICES',
+    topicId: 'COMPUTER_NETWORKING',
+    topicName: 'Mạng máy tính & Thiết bị mạng (Tin 12 - Chủ đề 2)',
+    name: 'Thiết bị mạng thông dụng & Kết nối',
+    grade: 12,
+    strand: 'ICT',
+    description: 'Thiết bị Hub vs Switch (xung đột collision, địa chỉ MAC), WAP (Điểm truy cập không dây Wi-Fi), Router (cổng LAN và WAN, định tuyến), Modem (chuyển đổi số - tương tự, ADSL, cáp quang, GSM 3G/4G/5G), cáp xoắn đôi UTP đầu bấm RJ45.',
+    prerequisites: [],
+    importanceWeight: 0.95,
+    subconcepts: ['Hub vs Switch & Xung đột Collision', 'Bộ định tuyến Router & Cổng WAN/LAN', 'Modem chuyển đổi tín hiệu & WAP', 'Cáp UTP chuẩn RJ45 & Wi-Fi'],
+  },
+  {
+    id: 'CS12_NETWORK_PROTOCOLS',
+    topicId: 'COMPUTER_NETWORKING',
+    topicName: 'Mạng máy tính & Thiết bị mạng (Tin 12 - Chủ đề 2)',
+    name: 'Giao thức mạng, TCP/IP & Chia sẻ tài nguyên',
+    grade: 12,
+    strand: 'ICT',
+    description: 'Giao thức mạng: Ethernet (địa chỉ MAC 6 byte), bộ giao thức TCP/IP (IP đánh địa chỉ IPv4 4 byte dạng dot decimal và định tuyến, TCP kiểm soát truyền tin cậy, chia gói, cổng port ứng dụng), HTTP, DNS, lệnh ping/ICMP; Chia sẻ tệp và máy in trong mạng LAN.',
+    prerequisites: ['CS12_NETWORK_DEVICES'],
+    importanceWeight: 0.9,
+    subconcepts: ['Giao thức Ethernet & Địa chỉ MAC', 'Giao thức IP & Bảng định tuyến', 'Giao thức TCP & Cổng ứng dụng (Port)', 'Lệnh ping ICMP & Chia sẻ thư mục/máy in'],
+  },
+
+  // CHỦ ĐỀ 3: ĐẠO ĐỨC, PHÁP LUẬT VÀ VĂN HÓA TRONG MÔI TRƯỜNG SỐ (BÀI 6)
+  {
+    id: 'CS12_DIGITAL_COMMUNICATION',
+    topicId: 'ETHICS_SECURITY',
+    topicName: 'Đạo đức, Pháp luật & Văn hóa số (Tin 12 - Chủ đề 3)',
+    name: 'Giao tiếp & Ứng xử nhân văn trong không gian mạng',
+    grade: 12,
+    strand: 'DL',
+    description: 'Ưu nhược điểm giao tiếp trực tuyến; 4 khía cạnh nhân văn: Tôn trọng, Lịch sự, Thấu hiểu, Hỗ trợ; Bộ quy tắc ứng xử trên mạng xã hội (Quyết định số 874/QĐ-BTTTT ngày 17/6/2021).',
+    prerequisites: [],
+    importanceWeight: 0.85,
+    subconcepts: ['Ưu nhược điểm giao tiếp mạng', '4 Quy tắc nhân văn (Tôn trọng, Lịch sự, Thấu hiểu, Hỗ trợ)', 'Bộ quy tắc ứng xử QĐ 874/QĐ-BTTTT', 'Bảo vệ quyền riêng tư & Ngăn chặn tin giả'],
+  },
+
+  // CHỦ ĐỀ 4: GIẢI QUYẾT VẤN ĐỀ VỚI SỰ TRỢ GIÚP CỦA MÁY TÍNH - THIẾT KẾ WEB (BÀI 7 ĐẾN BÀI 18)
+  {
+    id: 'CS12_WEB_HTML_BASIC',
+    topicId: 'WEB_DEVELOPMENT',
+    topicName: 'Thiết kế Web HTML5 & CSS3 (Tin 12 - Chủ đề 4)',
+    name: 'HTML5: Cấu trúc trang web, Thẻ định dạng & Bảng biểu',
+    grade: 12,
+    strand: 'CS',
+    description: 'Cấu trúc tài liệu <!DOCTYPE html>, <html>, <head>, <meta charset="utf-8">, <title>, <body>; Các thẻ tiêu đề h1-h6, p, div, span, br, hr; Định dạng chữ b, strong, i, em, u, mark, small, sup, sub, del; Danh sách ol, ul, dl; Bảng table, caption, tr, th, td, rowspan, colspan.',
+    prerequisites: [],
+    importanceWeight: 1.0,
+    subconcepts: ['Cấu trúc khung HTML5 & Cây DOM', 'Thẻ khối div vs thẻ nội tuyến span', 'Danh sách ol, ul, dl', 'Bảng table & Gộp ô rowspan, colspan'],
+  },
+  {
+    id: 'CS12_WEB_HTML_ADVANCED',
+    topicId: 'WEB_DEVELOPMENT',
+    topicName: 'Thiết kế Web HTML5 & CSS3 (Tin 12 - Chủ đề 4)',
+    name: 'HTML5: Siêu liên kết, Đa phương tiện & Biểu mẫu Form',
+    grade: 12,
+    strand: 'CS',
+    description: 'Thẻ liên kết a href (tuyệt đối, tương đối, liên kết nội bộ neo #id); Thẻ ảnh img (src, alt, width, height); Thẻ video, audio (controls, autoplay, poster); Khung nội tuyến iframe; Biểu mẫu form, input (text, password, radio, checkbox, submit, file), label, select, textarea.',
+    prerequisites: ['CS12_WEB_HTML_BASIC'],
+    importanceWeight: 0.95,
+    subconcepts: ['Liên kết a href & Neo nội bộ #id', 'Đa phương tiện img, video, audio', 'Khung nội tuyến iframe', 'Biểu mẫu form & Các phần tử input'],
+  },
+  {
+    id: 'CS12_WEB_CSS_BASIC',
+    topicId: 'WEB_DEVELOPMENT',
+    topicName: 'Thiết kế Web HTML5 & CSS3 (Tin 12 - Chủ đề 4)',
+    name: 'CSS3: Cú pháp, Bộ chọn, Màu sắc & Định dạng văn bản',
+    grade: 12,
+    strand: 'CS',
+    description: 'Cú pháp CSS: selector {property: value;}; 3 cách nhúng (internal style, external link, inline style); Định dạng phông chữ (font-family, font-size, font-weight), màu sắc (RGB, Hex, HSL), căn lề text-align, khoảng cách dòng line-height, gạch chân text-decoration.',
+    prerequisites: ['CS12_WEB_HTML_BASIC'],
+    importanceWeight: 0.95,
+    subconcepts: ['3 Cách nhúng CSS (Nội bộ, Ngoại liên, Nội tuyến)', 'Font chữ serif, sans-serif, monospace', 'Hệ màu RGB, Hex, HSL', 'Định dạng văn bản & Tính kế thừa CSS'],
+  },
+  {
+    id: 'CS12_WEB_CSS_ADVANCED',
+    topicId: 'WEB_DEVELOPMENT',
+    topicName: 'Thiết kế Web HTML5 & CSS3 (Tin 12 - Chủ đề 4)',
+    name: 'CSS3: Box Model, Bộ chọn quan hệ & Độ ưu tiên (Specificity)',
+    grade: 12,
+    strand: 'CS',
+    description: 'Mô hình hộp Box Model (margin, border, padding, content); Bộ chọn quan hệ (E F con cháu, E > F con trực tiếp, E + F anh em kề, E ~ F anh em sau); Lớp giả pseudo-class (:hover, :link), phần tử giả (::first-line, ::first-letter); Độ ưu tiên Specificity (!important > inline > #id > .class > tag) và thứ tự quy tắc.',
+    prerequisites: ['CS12_WEB_CSS_BASIC'],
+    importanceWeight: 1.0,
+    subconcepts: ['Box Model (Margin, Border, Padding)', 'Bộ chọn quan hệ (E F, E>F, E+F, E~F)', 'Lớp giả :hover, :visited & Phần tử giả', 'Độ ưu tiên Specificity & Thứ tự quy tắc'],
+  },
+
+  // CHỦ ĐỀ 6 & 7: TIN HỌC ỨNG DỤNG LỚP 12 (BÀI 22 ĐẾN BÀI 28)
+  {
+    id: 'CS12_ICT_SMART_DEVICES',
+    topicId: 'APPLIED_INFORMATICS_12',
+    topicName: 'Ứng dụng Tin học & Thiết bị số (Tin 12 - Chủ đề 6, 7)',
+    name: 'Kết nối thiết bị số, Nhà thông minh (Smart Home) & VR',
+    grade: 12,
+    strand: 'ICT',
+    description: 'Kết nối máy chiếu/TV (VGA, HDMI, các chế độ Duplicate, Extend, PC/Second screen only); Kết nối Bluetooth; Thiết bị nhà thông minh (Smart Home: công tắc Wi-Fi, hẹn giờ tự động, app Vhome, Rạng Đông, Mi Home); Đồng hồ thông minh, kính thực tế ảo VR.',
+    prerequisites: [],
+    importanceWeight: 0.85,
+    subconcepts: ['Cổng VGA, HDMI & Chế độ trình chiếu màn hình', 'Kết nối Bluetooth máy tính - điện thoại', 'Hệ thống Smart Home & Công tắc Wi-Fi', 'Thiết bị đeo & Kính thực tế ảo VR'],
+  },
+  {
+    id: 'CS12_ICT_GOOGLE_SITES',
+    topicId: 'APPLIED_INFORMATICS_12',
+    topicName: 'Ứng dụng Tin học & Thiết bị số (Tin 12 - Chủ đề 6, 7)',
+    name: 'Thiết kế website trực quan với Google Sites',
+    grade: 12,
+    strand: 'ICT',
+    description: 'Xây dựng website trên Google Sites: Cấu trúc Header (Logo, Favicon, Banner), nội dung đa cột, nhúng Google Maps, nhúng biểu mẫu Google Forms khảo sát, liên kết thanh điều hướng, phân tích số liệu phản hồi trên Google Sheets.',
+    prerequisites: ['CS12_WEB_HTML_BASIC'],
+    importanceWeight: 0.85,
+    subconcepts: ['Cấu trúc trang web trên Google Sites', 'Tùy biến Logo, Favicon & Banner', 'Nhúng Google Maps & Google Forms', 'Xuất bản website & Quản lý phản hồi Sheets'],
+  },
+
+  // =========================================================================
+  // LỚP 11 - SÁCH GIÁO KHOA TIN HỌC 11 (KẾT NỐI TRI THỨC VỚI CUỘC SỐNG - ĐỊNH HƯỚNG TIN HỌC ỨNG DỤNG & CSDL)
+  // =========================================================================
+
+  // CHỦ ĐỀ 1: MÁY TÍNH VÀ XÃ HỘI TRI THỨC (BÀI 1 ĐẾN BÀI 5)
+  {
+    id: 'CS11_OS_HARDWARE',
+    topicId: 'OPERATING_SYSTEMS_HARDWARE',
+    topicName: 'Hệ điều hành, Phần cứng & Mạch logic (Tin 11 - Chủ đề 1)',
+    name: 'Hệ điều hành, Phần cứng máy tính & Mạch logic',
+    grade: 11,
+    strand: 'ICT',
+    description: 'Hệ điều hành Windows, Linux, macOS, Android, iOS; Quản lý CPU, RAM, tiến trình, đĩa (Defragment, Disk Cleanup); Phần mềm nguồn mở GNU GPL; Cấu trúc bên trong CPU (ALU, CU, Register, Cache, GHz), ROM vs RAM, bộ nhớ ngoài; Mạch logic AND, OR, NOT, XOR.',
+    prerequisites: [],
+    importanceWeight: 0.85,
+    subconcepts: ['Chức năng HĐH & Quản lý tiến trình/bộ nhớ', 'Phần mềm nguồn mở GNU GPL vs Mã nguồn đóng', 'Cấu trúc CPU (ALU, CU, Cache, Clock GHz)', 'Mạch logic cơ bản AND, OR, NOT, XOR'],
+  },
+
+  // CHỦ ĐỀ 2 & 3: TỔ CHỨC LƯU TRỮ, TÌM KIẾM, ĐẠO ĐỨC SỐ (BÀI 6 ĐẾN BÀI 9)
+  {
+    id: 'CS11_STORAGE_SECURITY',
+    topicId: 'STORAGE_SEARCH_SECURITY',
+    topicName: 'Lưu trữ đám mây, Tìm kiếm & An toàn số (Tin 11 - Chủ đề 2, 3)',
+    name: 'Lưu trữ đám mây, Tìm kiếm nâng cao & Phòng chống lừa đảo',
+    grade: 11,
+    strand: 'DL',
+    description: 'Lưu trữ đám mây (Google Drive, OneDrive, Dropbox); Kỹ thuật tìm kiếm nâng cao (filetype:pdf, dấu ngoặc kép "..."); Quản lý thư Gmail (nhãn Label, sao đánh dấu); An toàn số & 3 nguyên tắc phòng tránh lừa đảo trực tuyến: "Hãy chậm lại", "Kiểm tra ngay", "Dừng lại không gửi".',
+    prerequisites: [],
+    importanceWeight: 0.8,
+    subconcepts: ['Lưu trữ đám mây Drive & Phân quyền chia sẻ', 'Kỹ thuật tìm kiếm chính xác (filetype, quotes)', 'Quản lý email Gmail với nhãn Label', '3 Nguyên tắc phòng chống lừa đảo trực tuyến'],
+  },
+
+  // CHỦ ĐỀ 4 & 6: CƠ SỞ DỮ LIỆU, SQL & THỰC HÀNH QUẢN TRỊ (BÀI 10 ĐẾN BÀI 24)
+  {
+    id: 'CS11_DB_RELATIONAL',
+    topicId: 'RELATIONAL_DATABASE',
+    topicName: 'Cơ sở dữ liệu quan hệ (RDBMS) & Quản trị (Tin 11 - Chủ đề 4, 6)',
+    name: 'Mô hình CSDL quan hệ, Bảng & Các loại khóa',
+    grade: 11,
+    strand: 'CS',
+    description: 'Khái niệm CSDL (tính không dư thừa, độc lập, toàn vẹn, nhất quán, bảo mật); Hệ QTCSDL DBMS; Mô hình CSDL quan hệ của E.F. Codd (1970); Bảng quan hệ, bản ghi record, trường field; Khóa chính Primary Key, Khóa ngoại Foreign Key; Nghề quản trị CSDL (DBA).',
+    prerequisites: [],
+    importanceWeight: 1.0,
+    subconcepts: ['5 Đặc trưng cơ bản của CSDL', 'Hệ QTCSDL tập trung vs phân tán', 'Khóa chính Primary Key & Khóa ngoại Foreign Key', 'Ràng buộc toàn vẹn tham chiếu'],
+  },
+  {
+    id: 'CS11_SQL_QUERIES',
+    topicId: 'SQL_LANGUAGE',
+    topicName: 'Ngôn ngữ truy vấn SQL & HeidiSQL (Tin 11 - Chủ đề 4, 6)',
+    name: 'Ngôn ngữ SQL: Định nghĩa DDL, Thao tác DML & Thực hành HeidiSQL',
+    grade: 11,
+    strand: 'CS',
+    description: 'Cú pháp DDL: CREATE DATABASE, CREATE TABLE, ALTER TABLE, PRIMARY KEY, FOREIGN KEY; Cú pháp DML: SELECT, FROM, WHERE, ORDER BY, INNER JOIN, INSERT INTO, UPDATE, DELETE; Thực hành MySQL/HeidiSQL: CSDL mymusic, AUTO_INCREMENT, UNIQUE, sao lưu và phục hồi .sql.',
+    prerequisites: ['CS11_DB_RELATIONAL'],
+    importanceWeight: 1.0,
+    subconcepts: ['Lệnh DDL (CREATE, ALTER TABLE, PRIMARY/FOREIGN KEY)', 'Lệnh truy vấn SELECT, WHERE, ORDER BY', 'Kết nối bảng INNER JOIN ON', 'Thực hành HeidiSQL, AUTO_INCREMENT & Backup'],
+  },
+
+  // CHỦ ĐỀ 7: PHẦN MỀM CHỈNH SỬA ẢNH & LÀM VIDEO (BÀI 25 ĐẾN BÀI 31)
+  {
+    id: 'CS11_ICT_MEDIA_EDITING',
+    topicId: 'MULTIMEDIA_EDITING',
+    topicName: 'Phần mềm đồ họa & Biên tập video (Tin 11 - Chủ đề 7)',
+    name: 'Xử lý ảnh GIMP & Biên tập video VideoPad',
+    grade: 11,
+    strand: 'ICT',
+    description: 'Phần mềm GIMP: Điểm ảnh pixel, độ phân giải dpi/ppi, lớp ảnh Layer, công cụ chọn (Rectangle, Ellipse, Free Select, Fuzzy Select), chỉnh Brightness-Contrast, Color Balance, Hue-Saturation, Clone, Healing, tạo ảnh động GIF; VideoPad: Storyboard vs Timeline đa rãnh, Transition, Fade out, phụ đề Subtitles.',
+    prerequisites: [],
+    importanceWeight: 0.85,
+    subconcepts: ['Khái niệm Pixel, DPI/PPI & Lớp ảnh Layer trong GIMP', 'Các công cụ chọn & Tinh chỉnh màu sắc', 'Công cụ Clone, Healing & Tạo ảnh động GIF', 'Biên tập video VideoPad: Storyboard, Timeline & Transition'],
+  },
+
+  // =========================================================================
+  // LỚP 10 - NỀN TẢNG THUẬT TOÁN & LẬP TRÌNH PYTHON CỐT LÕI
+  // =========================================================================
+  {
+    id: 'CS10_PYTHON_CONTROL',
+    topicId: 'PYTHON_PROGRAMMING',
+    topicName: 'Thuật toán & Lập trình Python căn bản (Tin 10)',
+    name: 'Cấu trúc điều khiển: Rẽ nhánh & Vòng lặp',
+    grade: 10,
+    strand: 'CS',
+    description: 'Cú pháp if-elif-else, vòng lặp for với range(start, stop, step), vòng lặp while, lệnh break/continue, truy vết thuật toán.',
+    prerequisites: [],
+    importanceWeight: 0.9,
+    subconcepts: ['Cú pháp if-elif-else', 'Vòng lặp for range', 'Vòng lặp while', 'Lệnh break và continue'],
+  },
+  {
+    id: 'CS10_PYTHON_DATA_STRUCT',
+    topicId: 'PYTHON_PROGRAMMING',
+    topicName: 'Thuật toán & Lập trình Python căn bản (Tin 10)',
+    name: 'Danh sách (List), Xâu ký tự (String) & Hàm',
+    grade: 10,
+    strand: 'CS',
+    description: 'Chỉ số index, cắt lát slice list[start:stop], phương thức append/pop, thao tác chuỗi, định nghĩa hàm def, tham số và giá trị trả về.',
+    prerequisites: ['CS10_PYTHON_CONTROL'],
+    importanceWeight: 0.95,
+    subconcepts: ['Chỉ số và Cắt lát Slice trong List', 'Xử lý chuỗi ký tự String', 'Định nghĩa hàm def', 'Tham số và Giá trị trả về'],
+  },
+];
+
+// Cấu trúc đề thi tham chiếu chuẩn hóa theo Thông tư & Quyết định của Bộ Giáo dục & Đào tạo từ năm 2025
+export const OFFICIAL_EXAM_BLUEPRINT_2025: ExamBlueprint = {
+  id: 'BLUEPRINT_THPT_2025_STANDARD',
+  title: 'Cấu trúc Đề thi Tốt nghiệp THPT môn Tin học chuẩn BGDĐT (24 TN + 2 Đ/S chung + 2 Đ/S tự chọn)',
+  academicYear: 2025,
+  durationMinutes: 50,
+  totalQuestions: 28, // 24 câu TN bắt buộc + 2 câu Đ/S chung + 2 câu Đ/S tự chọn theo định hướng
+  totalScore: 10.0,
+  hasElectiveTracks: true,
+  sections: {
+    sectionI: {
+      name: 'Phần I: Trắc nghiệm bắt buộc (24 câu trắc nghiệm 4 lựa chọn - 6.0 điểm)',
+      questionCount: 24,
+      scorePerQuestion: 0.25, // 24 * 0.25 = 6.0 điểm
+      totalScore: 6.0,
+    },
+    sectionII: {
+      name: 'Phần II: Đúng/Sai bắt buộc chung (2 câu hỏi Đúng/Sai cho TẤT CẢ thí sinh - 2.0 điểm)',
+      questionCount: 2, // 2 câu chung cho tất cả thí sinh
+      totalScore: 2.0,
+      scorePerQuestion: 1.0, // Mỗi câu 1.0 điểm
+      // Thang điểm lũy tiến thang 1.0đ chuẩn BGDĐT:
+      scoringRules: {
+        oneCorrect: 0.1,   // Đúng 1 ý: 0.1 đ
+        twoCorrect: 0.25,  // Đúng 2 ý: 0.25 đ
+        threeCorrect: 0.5, // Đúng 3 ý: 0.5 đ
+        fourCorrect: 1.0,  // Đúng 4 ý: 1.0 đ
+      },
+    },
+    sectionIII: {
+      name: 'Phần III: Đúng/Sai tự chọn theo Định hướng (2 câu phân hóa CS hoặc ICT - 2.0 điểm)',
+      questionCount: 2, // 2 câu cho mỗi thí sinh theo track
+      electivePerStudentCount: 2,
+      totalScore: 2.0,
+      scorePerQuestion: 1.0, // Mỗi câu 1.0 điểm
+      // Thang điểm lũy tiến thang 1.0đ chuẩn BGDĐT:
+      scoringRules: {
+        oneCorrect: 0.1,   // Đúng 1 ý: 0.1 đ
+        twoCorrect: 0.25,  // Đúng 2 ý: 0.25 đ
+        threeCorrect: 0.5, // Đúng 3 ý: 0.5 đ
+        fourCorrect: 1.0,  // Đúng 4 ý: 1.0 đ
+      },
+      tracks: {
+        CS: { name: 'Định hướng Khoa học máy tính (CS)', questionCount: 2 },
+        ICT: { name: 'Định hướng Tin học ứng dụng (ICT)', questionCount: 2 },
+      },
+    },
+  },
+  topicDistribution: {
+    'Trí tuệ nhân tạo (AI) & Đời sống (Tin 12 - Chủ đề 1)': 4,
+    'Thiết kế Web HTML5 & CSS3 (Tin 12 - Chủ đề 4)': 4,
+    'Mạng máy tính & Thiết bị mạng (Tin 12 - Chủ đề 2)': 3,
+    'Cơ sở dữ liệu quan hệ (RDBMS) & Quản trị (Tin 11 - Chủ đề 4, 6)': 4,
+    'Ngôn ngữ truy vấn SQL & HeidiSQL (Tin 11 - Chủ đề 4, 6)': 4,
+    'Hệ điều hành, Phần cứng & Mạch logic (Tin 11 - Chủ đề 1)': 2,
+    'Thuật toán & Lập trình Python căn bản (Tin 10)': 4,
+    'Ứng dụng Tin học & Thiết bị số (Tin 12 - Chủ đề 6, 7)': 1,
+  },
+};
+
+export const INITIAL_STUDENT_MASTERIES: Record<string, StudentMastery> = {
+  CS12_AI_CONCEPTS: {
+    conceptId: 'CS12_AI_CONCEPTS',
+    masteryScore: 0.85,
+    confidenceScore: 0.88,
+    totalAttempts: 14,
+    correctAttempts: 12,
+    consecutiveSuccessStreak: 4,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 24).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 48).toISOString(),
+    trend: 'improving',
+  },
+  CS12_AI_APPLICATIONS: {
+    conceptId: 'CS12_AI_APPLICATIONS',
+    masteryScore: 0.78,
+    confidenceScore: 0.8,
+    totalAttempts: 10,
+    correctAttempts: 8,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 36).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 72).toISOString(),
+    trend: 'improving',
+  },
+  CS12_NETWORK_DEVICES: {
+    conceptId: 'CS12_NETWORK_DEVICES',
+    masteryScore: 0.75,
+    confidenceScore: 0.78,
+    totalAttempts: 11,
+    correctAttempts: 8,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 40).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 48).toISOString(),
+    trend: 'stable',
+  },
+  CS12_NETWORK_PROTOCOLS: {
+    conceptId: 'CS12_NETWORK_PROTOCOLS',
+    masteryScore: 0.68,
+    confidenceScore: 0.7,
+    totalAttempts: 12,
+    correctAttempts: 8,
+    consecutiveSuccessStreak: 1,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 50).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 24).toISOString(),
+    trend: 'stable',
+  },
+  CS12_DIGITAL_COMMUNICATION: {
+    conceptId: 'CS12_DIGITAL_COMMUNICATION',
+    masteryScore: 0.92,
+    confidenceScore: 0.95,
+    totalAttempts: 8,
+    correctAttempts: 8,
+    consecutiveSuccessStreak: 5,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 80).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 120).toISOString(),
+    trend: 'improving',
+  },
+  CS12_WEB_HTML_BASIC: {
+    conceptId: 'CS12_WEB_HTML_BASIC',
+    masteryScore: 0.88,
+    confidenceScore: 0.9,
+    totalAttempts: 16,
+    correctAttempts: 14,
+    consecutiveSuccessStreak: 4,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 12).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 72).toISOString(),
+    trend: 'improving',
+  },
+  CS12_WEB_HTML_ADVANCED: {
+    conceptId: 'CS12_WEB_HTML_ADVANCED',
+    masteryScore: 0.72,
+    confidenceScore: 0.75,
+    totalAttempts: 10,
+    correctAttempts: 7,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 24).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 48).toISOString(),
+    trend: 'stable',
+  },
+  CS12_WEB_CSS_BASIC: {
+    conceptId: 'CS12_WEB_CSS_BASIC',
+    masteryScore: 0.82,
+    confidenceScore: 0.85,
+    totalAttempts: 12,
+    correctAttempts: 10,
+    consecutiveSuccessStreak: 3,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 30).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 60).toISOString(),
+    trend: 'improving',
+  },
+  CS12_WEB_CSS_ADVANCED: {
+    conceptId: 'CS12_WEB_CSS_ADVANCED',
+    masteryScore: 0.58,
+    confidenceScore: 0.6,
+    totalAttempts: 14,
+    correctAttempts: 8,
+    consecutiveSuccessStreak: 1,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 48).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 12).toISOString(),
+    trend: 'declining',
+  },
+  CS12_ICT_SMART_DEVICES: {
+    conceptId: 'CS12_ICT_SMART_DEVICES',
+    masteryScore: 0.79,
+    confidenceScore: 0.82,
+    totalAttempts: 9,
+    correctAttempts: 7,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 60).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 96).toISOString(),
+    trend: 'improving',
+  },
+  CS12_ICT_GOOGLE_SITES: {
+    conceptId: 'CS12_ICT_GOOGLE_SITES',
+    masteryScore: 0.84,
+    confidenceScore: 0.86,
+    totalAttempts: 8,
+    correctAttempts: 7,
+    consecutiveSuccessStreak: 3,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 72).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 96).toISOString(),
+    trend: 'improving',
+  },
+  CS11_OS_HARDWARE: {
+    conceptId: 'CS11_OS_HARDWARE',
+    masteryScore: 0.74,
+    confidenceScore: 0.76,
+    totalAttempts: 10,
+    correctAttempts: 7,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 90).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 80).toISOString(),
+    trend: 'stable',
+  },
+  CS11_STORAGE_SECURITY: {
+    conceptId: 'CS11_STORAGE_SECURITY',
+    masteryScore: 0.9,
+    confidenceScore: 0.92,
+    totalAttempts: 10,
+    correctAttempts: 9,
+    consecutiveSuccessStreak: 4,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 110).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 140).toISOString(),
+    trend: 'improving',
+  },
+  CS11_DB_RELATIONAL: {
+    conceptId: 'CS11_DB_RELATIONAL',
+    masteryScore: 0.76,
+    confidenceScore: 0.8,
+    totalAttempts: 14,
+    correctAttempts: 11,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 36).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 24).toISOString(),
+    trend: 'stable',
+  },
+  CS11_SQL_QUERIES: {
+    conceptId: 'CS11_SQL_QUERIES',
+    masteryScore: 0.52,
+    confidenceScore: 0.55,
+    totalAttempts: 18,
+    correctAttempts: 9,
+    consecutiveSuccessStreak: 1,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 10).toISOString(),
+    nextSpacedReviewAt: new Date().toISOString(),
+    trend: 'declining',
+  },
+  CS11_ICT_MEDIA_EDITING: {
+    conceptId: 'CS11_ICT_MEDIA_EDITING',
+    masteryScore: 0.81,
+    confidenceScore: 0.85,
+    totalAttempts: 9,
+    correctAttempts: 7,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 48).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 96).toISOString(),
+    trend: 'improving',
+  },
+  CS10_PYTHON_CONTROL: {
+    conceptId: 'CS10_PYTHON_CONTROL',
+    masteryScore: 0.85,
+    confidenceScore: 0.9,
+    totalAttempts: 18,
+    correctAttempts: 16,
+    consecutiveSuccessStreak: 5,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 100).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 120).toISOString(),
+    trend: 'improving',
+  },
+  CS10_PYTHON_DATA_STRUCT: {
+    conceptId: 'CS10_PYTHON_DATA_STRUCT',
+    masteryScore: 0.78,
+    confidenceScore: 0.8,
+    totalAttempts: 12,
+    correctAttempts: 9,
+    consecutiveSuccessStreak: 2,
+    lastPracticedAt: new Date(Date.now() - 3600 * 1000 * 70).toISOString(),
+    nextSpacedReviewAt: new Date(Date.now() + 3600 * 1000 * 80).toISOString(),
+    trend: 'stable',
+  },
+};
+
