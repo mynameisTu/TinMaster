@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
+import { extractQuestionsFromFile } from '../src/services/exerciseService';
 
 const testGeminiSecret = 'unit-test-gemini-secret';
 process.env.GEMINI_API_KEY = testGeminiSecret;
 const { default: app } = await import('../api/[...path].js');
+const { default: extractFileApp } = await import('../api/exercises/extract-file.js');
 
 let baseUrl = '';
 let server: ReturnType<typeof app.listen>;
@@ -46,12 +48,25 @@ test('health endpoint retains its response contract without exposing credentials
 });
 
 test('file extraction rejects an invalid upload using the existing response shape', async () => {
-  const response = await fetch(`${baseUrl}/api/exercises/extract-file`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: { name: 'invalid.pdf' } }),
-  });
-  const body = await response.json();
+  const serverlessRouteServer = extractFileApp.listen(0, '127.0.0.1');
+  await new Promise<void>((resolve) => serverlessRouteServer.once('listening', resolve));
+  const address = serverlessRouteServer.address();
+  assert.ok(address && typeof address !== 'string');
+
+  let response: Response;
+  let body: unknown;
+  try {
+    response = await fetch(`http://127.0.0.1:${address.port}/api/exercises/extract-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: { name: 'invalid.pdf' } }),
+    });
+    body = await response.json();
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      serverlessRouteServer.close((error?: Error) => (error ? reject(error) : resolve()));
+    });
+  }
 
   assert.equal(response.status, 400);
   assert.deepEqual(body, {
@@ -92,4 +107,67 @@ test('AI endpoints retain their no-key fallback contracts', async () => {
   assert.deepEqual(await videoResponse.json(), {
     error: 'Gemini API not configured',
   });
+});
+
+test('exercise extraction reports HTTP and API failures instead of returning empty success', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ success: false, error: 'File không hợp lệ.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    await assert.rejects(
+      extractQuestionsFromFile({ name: 'invalid.pdf', base64: 'data' }),
+      /File không hợp lệ/
+    );
+
+    globalThis.fetch = async () =>
+      new Response('<!doctype html><title>Not Found</title>', {
+        status: 404,
+        headers: { 'Content-Type': 'text/html' },
+      });
+
+    await assert.rejects(
+      extractQuestionsFromFile({ name: 'missing-route.pdf', base64: 'data' }),
+      /HTTP 404/
+    );
+
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ success: true, questions: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    await assert.rejects(
+      extractQuestionsFromFile({ name: 'empty.pdf', base64: 'data' }),
+      /Không tìm thấy câu hỏi/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('exercise extraction preserves successful response payloads', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input) => {
+      assert.equal(input, '/api/exercises/extract-file');
+      return new Response(JSON.stringify({
+        success: true,
+        questions: [{ id: 'question-1', stem: 'Câu hỏi kiểm thử' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const result = await extractQuestionsFromFile({ name: 'sample.docx', base64: 'data' });
+    assert.equal(result.success, true);
+    assert.equal(result.questions?.length, 1);
+    assert.equal(result.questions?.[0].stem, 'Câu hỏi kiểm thử');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

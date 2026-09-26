@@ -201,9 +201,11 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
   const handleStartExtraction = async () => {
     if (filesList.length === 0) return;
 
+    setValidationError(null);
     setCurrentStep(2);
     setCurrentProcessingIndex(0);
     const accumulatedDrafts: ExtractedQuestionDraft[] = [];
+    const extractionErrors: string[] = [];
 
     // Read answer key base64 if present
     let answerKeyPayload: any = undefined;
@@ -265,30 +267,34 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
             )
           );
         } else {
-          // Graceful error per file without breaking the rest
+          const errorMessage =
+            data.error || 'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.';
+          extractionErrors.push(`${current.name}: ${errorMessage}`);
           setFilesList((prev) =>
             prev.map((item, idx) =>
               idx === i
                 ? {
                     ...item,
                     status: 'error',
-                    errorMessage:
-                      data.error ||
-                      'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.',
+                    errorMessage,
                   }
                 : item
             )
           );
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errorMessage =
+          err instanceof Error
+            ? err.message
+            : 'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.';
+        extractionErrors.push(`${current.name}: ${errorMessage}`);
         setFilesList((prev) =>
           prev.map((item, idx) =>
             idx === i
               ? {
                   ...item,
                   status: 'error',
-                  errorMessage:
-                    'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.',
+                  errorMessage,
                 }
               : item
           )
@@ -296,8 +302,20 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
       }
     }
 
-    // Transition to Review step with extracted questions
     setDraftQuestions(accumulatedDrafts);
+    if (accumulatedDrafts.length === 0) {
+      setValidationError(
+        `Không thể trích xuất câu hỏi. ${extractionErrors.join(' ')}`
+      );
+      setCurrentStep(1);
+      return;
+    }
+
+    if (extractionErrors.length > 0) {
+      setValidationError(
+        `Một số file không trích xuất được; chỉ các câu hỏi đọc thành công được đưa vào bước rà soát. ${extractionErrors.join(' ')}`
+      );
+    }
     setCurrentStep(3);
   };
 
@@ -687,6 +705,21 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
           {/* STEP 3: REVIEW & CONFIRM STEP (CRITICAL — do not auto-publish) */}
           {currentStep === 3 && (
             <div className="space-y-6">
+              {validationError && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start space-x-2.5 text-xs text-amber-800">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 font-medium">{validationError}</div>
+                  <button
+                    type="button"
+                    onClick={() => setValidationError(null)}
+                    className="text-amber-500 hover:text-amber-700 cursor-pointer"
+                    aria-label="Đóng thông báo"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Review Banner */}
               <div className="p-4 bg-blue-50/80 rounded-xl border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
