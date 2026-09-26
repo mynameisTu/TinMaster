@@ -2,6 +2,14 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
+import {
+  classifyGeminiError,
+  generateWithGeminiResilience,
+  GeminiResilienceError,
+  GeminiResponseError,
+  getRetryAfterMs,
+  parseAndValidateExtractedQuestions,
+} from './geminiResilience';
 
 dotenv.config();
 
@@ -18,6 +26,75 @@ function getGenAI(): GoogleGenAI | null {
     });
   }
   return aiClient;
+}
+
+class GeminiApiCallError extends Error {
+  readonly status?: number;
+  readonly retryAfterMs?: number;
+
+  constructor(error: unknown, retryAfterMs?: number) {
+    super(error instanceof Error ? error.message : 'Gemini API request failed.', { cause: error });
+    this.name = 'GeminiApiCallError';
+    const status = (error as { status?: unknown } | null)?.status;
+    this.status = typeof status === 'number' ? status : undefined;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function readPositiveEnvNumber(name: string, fallback: number, maximum: number): number {
+  const configured = Number(process.env[name]);
+  if (!Number.isFinite(configured) || configured <= 0) return fallback;
+  return Math.min(Math.floor(configured), maximum);
+}
+
+function logExtractionAttempt(details: {
+  model: string;
+  category: string;
+  retryCount: number;
+  durationMs: number;
+}): void {
+  console.info(
+    '[gemini-extraction]',
+    JSON.stringify({
+      model: details.model,
+      errorCategory: details.category,
+      retryCount: details.retryCount,
+      processingDurationMs: details.durationMs,
+    })
+  );
+}
+
+function getExtractionErrorMessage(error: unknown): string {
+  if (error instanceof GeminiResilienceError) {
+    if (error.category === 'quota_exhausted') {
+      return 'Gemini đã hết hạn mức sử dụng của dự án. Vui lòng kiểm tra quota/billing rồi thử lại.';
+    }
+    if (error.category === 'cancelled') {
+      return 'Yêu cầu trích xuất đã bị hủy. Vui lòng thử lại.';
+    }
+    if (error.category === 'deadline_exceeded') {
+      return 'Gemini xử lý quá lâu. Tệp vẫn được giữ lại; vui lòng thử lại sau.';
+    }
+    if (
+      !error.fallbackConfigured &&
+      ['overloaded', 'rate_limited', 'timeout', 'network'].includes(error.category)
+    ) {
+      return 'Gemini đang tạm thời không khả dụng và chưa cấu hình mô hình dự phòng. Tệp vẫn được giữ lại; vui lòng thử lại sau.';
+    }
+    if (error.category === 'rate_limited') {
+      return 'Gemini đang nhận quá nhiều yêu cầu. Vui lòng đợi một chút rồi thử lại.';
+    }
+    if (error.category === 'overloaded' || error.category === 'network') {
+      return 'Gemini đang tạm thời không khả dụng. Tệp vẫn được giữ lại; vui lòng thử lại sau.';
+    }
+    if (error.category === 'timeout') {
+      return 'Gemini xử lý quá lâu. Tệp vẫn được giữ lại; vui lòng thử lại sau.';
+    }
+  }
+  if (error instanceof GeminiResponseError) {
+    return 'Gemini trả về dữ liệu câu hỏi không hợp lệ. Vui lòng thử lại hoặc dùng tệp rõ hơn.';
+  }
+  return 'Không thể xử lý tệp này. Vui lòng thử lại hoặc kiểm tra định dạng tệp.';
 }
 
 export const app = express();
@@ -243,9 +320,21 @@ Trả về định dạng JSON thuần túy:
     const cleanBase64 = file.base64.includes('base64,')
       ? file.base64.split('base64,')[1]
       : file.base64;
+    const processingStartedAt = Date.now();
+    const extractionDeadlineMs = readPositiveEnvNumber(
+      'GEMINI_EXTRACTION_DEADLINE_MS',
+      180_000,
+      240_000
+    );
+    const requestAbortController = new AbortController();
+    const onRequestAborted = () => requestAbortController.abort();
+    const onResponseClosed = () => {
+      if (!res.writableEnded) requestAbortController.abort();
+    };
+    req.once('aborted', onRequestAborted);
+    res.once('close', onResponseClosed);
 
     try {
-      const ai = getGenAI();
       let docxExtractedText = '';
       let answerKeyExtractedText = '';
 
@@ -327,7 +416,7 @@ Yêu cầu trả về mảng JSON thuần túy (không bọc code block markdown
 
       let extractedQuestions: any[] = [];
 
-      if (ai) {
+      if (process.env.GEMINI_API_KEY) {
         let contentsPayload: any;
 
         if (fileExt === '.docx') {
@@ -399,40 +488,117 @@ Yêu cầu trả về mảng JSON thuần túy (không bọc code block markdown
           contentsPayload = { parts };
         }
 
-        let jsonText = '';
+        let modelUsed = process.env.GEMINI_PRIMARY_MODEL?.trim() || 'gemini-3.8-flash';
+        let retryCount = 0;
+        let processingDurationMs = 0;
         try {
-          const aiResponse = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: contentsPayload,
-            config: {
-              responseMimeType: 'application/json',
-            },
-          });
-          jsonText = aiResponse.text?.trim() || '';
-        } catch (geminiErr: any) {
-          console.warn('Gemini 3.8 Flash failed for extraction, trying fallback model gemini-3.5-flash:', geminiErr?.message);
-          const fallbackResponse = await ai.models.generateContent({
-            model: 'gemini-3.5-flash',
-            contents: contentsPayload,
-            config: {
-              responseMimeType: 'application/json',
-            },
-          });
-          jsonText = fallbackResponse.text?.trim() || '';
-        }
+          const generated = await generateWithGeminiResilience(
+            async (model, attempt) => {
+              const requestMetadata: { retryAfterMs?: number } = {};
+              const gemini = new GoogleGenAI({
+                apiKey: process.env.GEMINI_API_KEY,
+                httpOptions: {
+                  timeout: attempt.timeoutMs,
+                  retryOptions: { attempts: 1 },
+                  headers: { 'User-Agent': 'aistudio-build' },
+                  fetch: async (input, init) => {
+                    const controller = new AbortController();
+                    const abortSignals = [attempt.signal, init?.signal].filter(
+                      (signal): signal is AbortSignal => signal != null
+                    );
+                    const abortHandlers = abortSignals.map((signal) => {
+                      const abort = () => controller.abort(signal.reason);
+                      if (signal.aborted) abort();
+                      else signal.addEventListener('abort', abort, { once: true });
+                      return { signal, abort };
+                    });
 
-        if (jsonText) {
-          // Clean potential markdown wrappers if any
-          const cleanJson = jsonText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-          try {
-            const parsed = JSON.parse(cleanJson);
-            if (Array.isArray(parsed)) {
-              extractedQuestions = parsed;
-            } else if (parsed.questions && Array.isArray(parsed.questions)) {
-              extractedQuestions = parsed.questions;
+                    try {
+                      const response = await globalThis.fetch(input, {
+                        ...init,
+                        signal: controller.signal,
+                      });
+                      requestMetadata.retryAfterMs = getRetryAfterMs(
+                        response.headers.get('Retry-After')
+                      );
+                      return response;
+                    } finally {
+                      abortHandlers.forEach(({ signal, abort }) =>
+                        signal.removeEventListener('abort', abort)
+                      );
+                    }
+                  },
+                },
+              });
+
+              try {
+                return await gemini.models.generateContent({
+                  model,
+                  contents: contentsPayload,
+                  config: {
+                    responseMimeType: 'application/json',
+                  },
+                });
+              } catch (error) {
+                throw new GeminiApiCallError(error, requestMetadata.retryAfterMs);
+              }
+            },
+            {
+              primaryModel: process.env.GEMINI_PRIMARY_MODEL?.trim() || 'gemini-3.8-flash',
+              fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || undefined,
+              maxRetries: 2,
+              perAttemptTimeoutMs: readPositiveEnvNumber(
+                'GEMINI_ATTEMPT_TIMEOUT_MS',
+                30_000,
+                60_000
+              ),
+              overallDeadlineMs: extractionDeadlineMs - (Date.now() - processingStartedAt),
+              responseReserveMs: 15_000,
+              signal: requestAbortController.signal,
             }
-          } catch (e) {
-            console.error('Failed to parse AI JSON response:', e);
+          );
+
+          modelUsed = generated.model;
+          retryCount = generated.retryCount;
+          const jsonText = generated.value.text?.trim() || '';
+          extractedQuestions = parseAndValidateExtractedQuestions(jsonText);
+          processingDurationMs = Date.now() - processingStartedAt;
+          logExtractionAttempt({
+            model: modelUsed,
+            category: 'none',
+            retryCount,
+            durationMs: processingDurationMs,
+          });
+        } catch (error) {
+          const category =
+            error instanceof GeminiResilienceError
+              ? error.category
+              : error instanceof GeminiResponseError
+                ? error.category
+                : classifyGeminiError(error);
+          const details =
+            error instanceof GeminiResilienceError
+              ? {
+                  model: error.model,
+                  retryCount: error.retryCount,
+                  durationMs: Math.max(
+                    error.durationMs,
+                    Date.now() - processingStartedAt
+                  ),
+                }
+              : {
+                  model: modelUsed,
+                  retryCount,
+                  durationMs: Math.max(
+                    processingDurationMs,
+                    Date.now() - processingStartedAt
+                  ),
+                };
+
+          logExtractionAttempt({ ...details, category });
+
+          if (!(error instanceof GeminiResponseError)) {
+            throw error;
           }
         }
       }
@@ -518,13 +684,16 @@ Yêu cầu trả về mảng JSON thuần túy (không bọc code block markdown
         fileName,
         error: 'Không thể đọc nội dung câu hỏi từ file này, vui lòng kiểm tra lại định dạng hoặc nhập thủ công.',
       });
-    } catch (err: any) {
-      console.error(`Error processing file ${fileName}:`, err?.message);
+    } catch (err: unknown) {
+      if (requestAbortController.signal.aborted || res.destroyed) return;
       return res.json({
         success: false,
         fileName,
-        error: `Không thể đọc file này (${err?.message || 'Lỗi xử lý'}). Vui lòng thử lại hoặc nhập thủ công.`,
+        error: getExtractionErrorMessage(err),
       });
+    } finally {
+      req.removeListener('aborted', onRequestAborted);
+      res.removeListener('close', onResponseClosed);
     }
   });
 

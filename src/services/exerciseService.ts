@@ -16,21 +16,35 @@ export interface ExerciseExtractionResponse {
   error?: string;
 }
 
+export class ExerciseExtractionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExerciseExtractionError';
+  }
+}
+
 export async function extractQuestionsFromFile(
   file: ExerciseFilePayload,
   answerKeyFile?: ExerciseFilePayload
 ): Promise<ExerciseExtractionResponse> {
-  const response = await fetch('/api/exercises/extract-file', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file, answerKeyFile }),
-  });
+  let response: Response;
+  try {
+    response = await fetch('/api/exercises/extract-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, answerKeyFile }),
+    });
+  } catch {
+    throw new ExerciseExtractionError('Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.');
+  }
 
   let result: unknown;
   try {
     result = await response.json();
   } catch {
-    throw new Error(`Không thể đọc phản hồi từ máy chủ (HTTP ${response.status}).`);
+    throw new ExerciseExtractionError(
+      `Không thể đọc phản hồi từ máy chủ (HTTP ${response.status}).`
+    );
   }
 
   const responseBody =
@@ -45,19 +59,21 @@ export async function extractQuestionsFromFile(
         : undefined;
 
   if (!response.ok) {
-    throw new Error(serverError || `Máy chủ từ chối yêu cầu (HTTP ${response.status}).`);
+    throw new ExerciseExtractionError(
+      serverError || `Máy chủ từ chối yêu cầu (HTTP ${response.status}).`
+    );
   }
 
   if (typeof responseBody?.success !== 'boolean') {
-    throw new Error('Phản hồi trích xuất từ máy chủ không hợp lệ.');
+    throw new ExerciseExtractionError('Phản hồi trích xuất từ máy chủ không hợp lệ.');
   }
 
   if (!responseBody.success) {
-    throw new Error(serverError || 'Không thể trích xuất câu hỏi từ file.');
+    throw new ExerciseExtractionError(serverError || 'Không thể trích xuất câu hỏi từ file.');
   }
 
   if (!Array.isArray(responseBody.questions) || responseBody.questions.length === 0) {
-    throw new Error('Không tìm thấy câu hỏi nào trong file.');
+    throw new ExerciseExtractionError('Không tìm thấy câu hỏi nào trong file.');
   }
 
   return result as ExerciseExtractionResponse;

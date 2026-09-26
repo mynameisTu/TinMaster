@@ -3,6 +3,250 @@ import express from "express";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import mammoth from "mammoth";
+
+// src/server/geminiResilience.ts
+var GeminiResilienceError = class extends Error {
+  constructor(message, details) {
+    super(message, { cause: details.cause });
+    this.name = "GeminiResilienceError";
+    this.category = details.category;
+    this.model = details.model;
+    this.retryCount = details.retryCount;
+    this.durationMs = details.durationMs;
+    this.fallbackConfigured = details.fallbackConfigured;
+  }
+};
+var GeminiResponseError = class extends Error {
+  constructor(message, category) {
+    super(message);
+    this.category = category;
+    this.name = "GeminiResponseError";
+  }
+};
+var DEFAULT_MAX_RETRIES = 2;
+var DEFAULT_ATTEMPT_TIMEOUT_MS = 3e4;
+var DEFAULT_OVERALL_DEADLINE_MS = 18e4;
+var DEFAULT_RESPONSE_RESERVE_MS = 15e3;
+var DEFAULT_RETRY_BASE_DELAY_MS = 500;
+var DEFAULT_RETRY_MAX_DELAY_MS = 8e3;
+function getRetryAfterMs(value, now = Date.now()) {
+  if (!value) return void 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1e3;
+  }
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : void 0;
+}
+function classifyGeminiError(error) {
+  const metadata = error;
+  const status = typeof metadata?.status === "number" ? metadata.status : void 0;
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (status === 429) {
+    const looksLikeQuotaExhaustion = /(you exceeded.{0,40}quota|quota.{0,50}(?:exceed|exhaust|limit|deplet|reach)|(?:exhaust|exceed).{0,50}quota|billing|daily limit|per.day|limit\s*:\s*0|insufficient quota)/i.test(message) && !/(check|review).{0,20}quota|per.minute|per.second|rate.limit|too many requests|temporarily/i.test(message);
+    return looksLikeQuotaExhaustion ? "quota_exhausted" : "rate_limited";
+  }
+  if (status === 502 || status === 503 || status === 504) return "overloaded";
+  if (message.includes("cancel")) return "cancelled";
+  if (message.includes("timeout") || message.includes("timed out")) return "timeout";
+  if (status === void 0 && /(fetch failed|network|socket|econnreset|eai_again)/i.test(message)) {
+    return "network";
+  }
+  return "unknown";
+}
+function isRetryable(category) {
+  return category === "overloaded" || category === "rate_limited" || category === "timeout" || category === "network";
+}
+function getRetryAfterMsFromError(error) {
+  const retryAfterMs = error?.retryAfterMs;
+  return typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) ? Math.max(0, retryAfterMs) : void 0;
+}
+function createAbortError() {
+  return new Error("Gemini generation cancelled");
+}
+function sleep(milliseconds, signal) {
+  if (signal?.aborted) return Promise.reject(createAbortError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(createAbortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+async function runAttempt(generate, model, timeoutMs, externalSignal) {
+  if (externalSignal?.aborted) throw createAbortError();
+  const controller = new AbortController();
+  let timeout;
+  let abortListener;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort(new Error("Gemini attempt timed out"));
+      reject(new Error("Gemini attempt timed out"));
+    }, timeoutMs);
+  });
+  const cancellationPromise = externalSignal ? new Promise((_, reject) => {
+    abortListener = () => {
+      controller.abort(externalSignal.reason);
+      reject(createAbortError());
+    };
+    externalSignal.addEventListener("abort", abortListener, { once: true });
+  }) : void 0;
+  try {
+    const requests = [
+      generate(model, { signal: controller.signal, timeoutMs }),
+      timeoutPromise
+    ];
+    if (cancellationPromise) requests.push(cancellationPromise);
+    return await Promise.race(requests);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (abortListener && externalSignal) {
+      externalSignal.removeEventListener("abort", abortListener);
+    }
+  }
+}
+async function generateWithGeminiResilience(generate, options) {
+  const now = options.now || Date.now;
+  const random = options.random || Math.random;
+  const wait = options.sleep || sleep;
+  const startedAt = now();
+  const deadline = startedAt + (options.overallDeadlineMs ?? DEFAULT_OVERALL_DEADLINE_MS);
+  const reserveMs = options.responseReserveMs ?? DEFAULT_RESPONSE_RESERVE_MS;
+  const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+  const retryBaseDelayMs = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
+  const retryMaxDelayMs = options.retryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS;
+  const models = [options.primaryModel];
+  if (options.fallbackModel && options.fallbackModel !== options.primaryModel) {
+    models.push(options.fallbackModel);
+  }
+  let retryCount = 0;
+  let lastError;
+  let lastCategory = "unknown";
+  let lastModel = options.primaryModel;
+  const throwFailure = (category, cause) => {
+    const fallbackConfigured = models.length > 1;
+    const message = category === "quota_exhausted" ? "Gemini API quota is exhausted. Check the project quota and billing configuration." : category === "deadline_exceeded" ? "Gemini extraction stopped before the function deadline to allow a response to be returned." : category === "cancelled" ? "Gemini extraction was cancelled." : !fallbackConfigured && isRetryable(category) ? "Gemini is temporarily unavailable and no fallback model is configured." : "Gemini extraction failed after the available attempts.";
+    throw new GeminiResilienceError(message, {
+      category,
+      model: lastModel,
+      retryCount,
+      durationMs: Math.max(0, now() - startedAt),
+      fallbackConfigured,
+      cause
+    });
+  };
+  for (const model of models) {
+    lastModel = model;
+    const attemptsForModel = model === options.primaryModel ? maxRetries + 1 : 1;
+    for (let modelAttempt = 0; modelAttempt < attemptsForModel; modelAttempt += 1) {
+      if (options.signal?.aborted) throwFailure("cancelled", options.signal.reason);
+      const remainingMs = deadline - now();
+      const timeoutMs = Math.min(
+        options.perAttemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS,
+        remainingMs - reserveMs
+      );
+      if (timeoutMs <= 0) throwFailure("deadline_exceeded", lastError);
+      try {
+        const value = await runAttempt(generate, model, timeoutMs, options.signal);
+        return {
+          value,
+          model,
+          retryCount,
+          durationMs: Math.max(0, now() - startedAt)
+        };
+      } catch (error) {
+        lastError = error;
+        lastCategory = classifyGeminiError(error);
+        if (lastCategory === "cancelled" || !isRetryable(lastCategory)) {
+          throwFailure(lastCategory, error);
+        }
+        const hasSameModelRetry = modelAttempt + 1 < attemptsForModel;
+        const hasFallback = model === options.primaryModel && models.length > 1;
+        if (!hasSameModelRetry && !hasFallback) {
+          throwFailure(lastCategory, error);
+        }
+        const exponent = Math.max(0, modelAttempt);
+        const jitterDelay = Math.floor(
+          random() * Math.min(retryMaxDelayMs, retryBaseDelayMs * 2 ** exponent)
+        );
+        const delayMs = Math.max(jitterDelay, getRetryAfterMsFromError(error) || 0);
+        const timeBeforeDeadline = deadline - now() - reserveMs;
+        if (delayMs >= timeBeforeDeadline) {
+          throwFailure("deadline_exceeded", error);
+        }
+        retryCount += 1;
+        try {
+          await wait(delayMs, options.signal);
+        } catch (waitError) {
+          if (options.signal?.aborted) throwFailure("cancelled", waitError);
+          throw waitError;
+        }
+      }
+    }
+  }
+  return throwFailure(lastCategory, lastError);
+}
+function parseAndValidateExtractedQuestions(responseText) {
+  const cleanJson = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(cleanJson);
+  } catch (error) {
+    throw new GeminiResponseError("Gemini returned invalid JSON.", "invalid_json");
+  }
+  const questions = Array.isArray(parsed) ? parsed : typeof parsed === "object" && parsed !== null && Array.isArray(parsed.questions) ? parsed.questions : void 0;
+  if (!questions || questions.length === 0 || !questions.every(isValidQuestion)) {
+    throw new GeminiResponseError(
+      "Gemini returned questions that do not match the expected question schema.",
+      "invalid_schema"
+    );
+  }
+  return questions;
+}
+function isValidQuestion(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const question = value;
+  if (typeof question.stem !== "string" || !question.stem.trim()) return false;
+  if (question.questionType === "single_choice") {
+    if (!Array.isArray(question.singleChoiceOptions) || question.singleChoiceOptions.length !== 4) {
+      return false;
+    }
+    const labels = /* @__PURE__ */ new Set();
+    return question.singleChoiceOptions.every((option) => {
+      if (typeof option !== "object" || option === null) return false;
+      const candidate = option;
+      if (!["A", "B", "C", "D"].includes(String(candidate.label)) || typeof candidate.text !== "string" || typeof candidate.isCorrect !== "boolean") {
+        return false;
+      }
+      labels.add(candidate.label);
+      return true;
+    }) && labels.size === 4;
+  }
+  if (question.questionType === "true_false_multistatement") {
+    if (!Array.isArray(question.trueFalseStatements) || question.trueFalseStatements.length !== 4) {
+      return false;
+    }
+    const orders = /* @__PURE__ */ new Set();
+    return question.trueFalseStatements.every((statement) => {
+      if (typeof statement !== "object" || statement === null) return false;
+      const candidate = statement;
+      if (!["a", "b", "c", "d"].includes(String(candidate.subOrder)) || typeof candidate.statementText !== "string" || typeof candidate.isCorrect !== "boolean") {
+        return false;
+      }
+      orders.add(candidate.subOrder);
+      return true;
+    }) && orders.size === 4;
+  }
+  return false;
+}
+
+// src/server/api.ts
 dotenv.config();
 var aiClient = null;
 function getGenAI() {
@@ -17,6 +261,60 @@ function getGenAI() {
     });
   }
   return aiClient;
+}
+var GeminiApiCallError = class extends Error {
+  constructor(error, retryAfterMs) {
+    super(error instanceof Error ? error.message : "Gemini API request failed.", { cause: error });
+    this.name = "GeminiApiCallError";
+    const status = error?.status;
+    this.status = typeof status === "number" ? status : void 0;
+    this.retryAfterMs = retryAfterMs;
+  }
+};
+function readPositiveEnvNumber(name, fallback, maximum) {
+  const configured = Number(process.env[name]);
+  if (!Number.isFinite(configured) || configured <= 0) return fallback;
+  return Math.min(Math.floor(configured), maximum);
+}
+function logExtractionAttempt(details) {
+  console.info(
+    "[gemini-extraction]",
+    JSON.stringify({
+      model: details.model,
+      errorCategory: details.category,
+      retryCount: details.retryCount,
+      processingDurationMs: details.durationMs
+    })
+  );
+}
+function getExtractionErrorMessage(error) {
+  if (error instanceof GeminiResilienceError) {
+    if (error.category === "quota_exhausted") {
+      return "Gemini \u0111\xE3 h\u1EBFt h\u1EA1n m\u1EE9c s\u1EED d\u1EE5ng c\u1EE7a d\u1EF1 \xE1n. Vui l\xF2ng ki\u1EC3m tra quota/billing r\u1ED3i th\u1EED l\u1EA1i.";
+    }
+    if (error.category === "cancelled") {
+      return "Y\xEAu c\u1EA7u tr\xEDch xu\u1EA5t \u0111\xE3 b\u1ECB h\u1EE7y. Vui l\xF2ng th\u1EED l\u1EA1i.";
+    }
+    if (error.category === "deadline_exceeded") {
+      return "Gemini x\u1EED l\xFD qu\xE1 l\xE2u. T\u1EC7p v\u1EABn \u0111\u01B0\u1EE3c gi\u1EEF l\u1EA1i; vui l\xF2ng th\u1EED l\u1EA1i sau.";
+    }
+    if (!error.fallbackConfigured && ["overloaded", "rate_limited", "timeout", "network"].includes(error.category)) {
+      return "Gemini \u0111ang t\u1EA1m th\u1EDDi kh\xF4ng kh\u1EA3 d\u1EE5ng v\xE0 ch\u01B0a c\u1EA5u h\xECnh m\xF4 h\xECnh d\u1EF1 ph\xF2ng. T\u1EC7p v\u1EABn \u0111\u01B0\u1EE3c gi\u1EEF l\u1EA1i; vui l\xF2ng th\u1EED l\u1EA1i sau.";
+    }
+    if (error.category === "rate_limited") {
+      return "Gemini \u0111ang nh\u1EADn qu\xE1 nhi\u1EC1u y\xEAu c\u1EA7u. Vui l\xF2ng \u0111\u1EE3i m\u1ED9t ch\xFAt r\u1ED3i th\u1EED l\u1EA1i.";
+    }
+    if (error.category === "overloaded" || error.category === "network") {
+      return "Gemini \u0111ang t\u1EA1m th\u1EDDi kh\xF4ng kh\u1EA3 d\u1EE5ng. T\u1EC7p v\u1EABn \u0111\u01B0\u1EE3c gi\u1EEF l\u1EA1i; vui l\xF2ng th\u1EED l\u1EA1i sau.";
+    }
+    if (error.category === "timeout") {
+      return "Gemini x\u1EED l\xFD qu\xE1 l\xE2u. T\u1EC7p v\u1EABn \u0111\u01B0\u1EE3c gi\u1EEF l\u1EA1i; vui l\xF2ng th\u1EED l\u1EA1i sau.";
+    }
+  }
+  if (error instanceof GeminiResponseError) {
+    return "Gemini tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u c\xE2u h\u1ECFi kh\xF4ng h\u1EE3p l\u1EC7. Vui l\xF2ng th\u1EED l\u1EA1i ho\u1EB7c d\xF9ng t\u1EC7p r\xF5 h\u01A1n.";
+  }
+  return "Kh\xF4ng th\u1EC3 x\u1EED l\xFD t\u1EC7p n\xE0y. Vui l\xF2ng th\u1EED l\u1EA1i ho\u1EB7c ki\u1EC3m tra \u0111\u1ECBnh d\u1EA1ng t\u1EC7p.";
 }
 var app = express();
 app.use(express.json({ limit: process.env.VERCEL ? "4mb" : "50mb" }));
@@ -218,8 +516,20 @@ Tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng JSON thu\u1EA7n t\xFAy:
     const fileName = file.name;
     const fileExt = fileName.substring(fileName.lastIndexOf(".")).toLowerCase();
     const cleanBase64 = file.base64.includes("base64,") ? file.base64.split("base64,")[1] : file.base64;
+    const processingStartedAt = Date.now();
+    const extractionDeadlineMs = readPositiveEnvNumber(
+      "GEMINI_EXTRACTION_DEADLINE_MS",
+      18e4,
+      24e4
+    );
+    const requestAbortController = new AbortController();
+    const onRequestAborted = () => requestAbortController.abort();
+    const onResponseClosed = () => {
+      if (!res.writableEnded) requestAbortController.abort();
+    };
+    req.once("aborted", onRequestAborted);
+    res.once("close", onResponseClosed);
     try {
-      const ai = getGenAI();
       let docxExtractedText = "";
       let answerKeyExtractedText = "";
       if (fileExt === ".docx") {
@@ -290,7 +600,7 @@ Y\xEAu c\u1EA7u tr\u1EA3 v\u1EC1 m\u1EA3ng JSON thu\u1EA7n t\xFAy (kh\xF4ng b\u1
   }
 ]`;
       let extractedQuestions = [];
-      if (ai) {
+      if (process.env.GEMINI_API_KEY) {
         let contentsPayload;
         if (fileExt === ".docx") {
           contentsPayload = `${curriculumPrompt}
@@ -357,38 +667,104 @@ H\xE3y \u0111\u1ECDc to\xE0n b\u1ED9 t\xE0i li\u1EC7u PDF tr\xEAn (${fileName}) 
           }
           contentsPayload = { parts };
         }
-        let jsonText = "";
+        let modelUsed = process.env.GEMINI_PRIMARY_MODEL?.trim() || "gemini-3.8-flash";
+        let retryCount = 0;
+        let processingDurationMs = 0;
         try {
-          const aiResponse = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents: contentsPayload,
-            config: {
-              responseMimeType: "application/json"
+          const generated = await generateWithGeminiResilience(
+            async (model, attempt) => {
+              const requestMetadata = {};
+              const gemini = new GoogleGenAI({
+                apiKey: process.env.GEMINI_API_KEY,
+                httpOptions: {
+                  timeout: attempt.timeoutMs,
+                  retryOptions: { attempts: 1 },
+                  headers: { "User-Agent": "aistudio-build" },
+                  fetch: async (input, init) => {
+                    const controller = new AbortController();
+                    const abortSignals = [attempt.signal, init?.signal].filter(
+                      (signal) => signal != null
+                    );
+                    const abortHandlers = abortSignals.map((signal) => {
+                      const abort = () => controller.abort(signal.reason);
+                      if (signal.aborted) abort();
+                      else signal.addEventListener("abort", abort, { once: true });
+                      return { signal, abort };
+                    });
+                    try {
+                      const response = await globalThis.fetch(input, {
+                        ...init,
+                        signal: controller.signal
+                      });
+                      requestMetadata.retryAfterMs = getRetryAfterMs(
+                        response.headers.get("Retry-After")
+                      );
+                      return response;
+                    } finally {
+                      abortHandlers.forEach(
+                        ({ signal, abort }) => signal.removeEventListener("abort", abort)
+                      );
+                    }
+                  }
+                }
+              });
+              try {
+                return await gemini.models.generateContent({
+                  model,
+                  contents: contentsPayload,
+                  config: {
+                    responseMimeType: "application/json"
+                  }
+                });
+              } catch (error) {
+                throw new GeminiApiCallError(error, requestMetadata.retryAfterMs);
+              }
+            },
+            {
+              primaryModel: process.env.GEMINI_PRIMARY_MODEL?.trim() || "gemini-3.8-flash",
+              fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || void 0,
+              maxRetries: 2,
+              perAttemptTimeoutMs: readPositiveEnvNumber(
+                "GEMINI_ATTEMPT_TIMEOUT_MS",
+                3e4,
+                6e4
+              ),
+              overallDeadlineMs: extractionDeadlineMs - (Date.now() - processingStartedAt),
+              responseReserveMs: 15e3,
+              signal: requestAbortController.signal
             }
+          );
+          modelUsed = generated.model;
+          retryCount = generated.retryCount;
+          const jsonText = generated.value.text?.trim() || "";
+          extractedQuestions = parseAndValidateExtractedQuestions(jsonText);
+          processingDurationMs = Date.now() - processingStartedAt;
+          logExtractionAttempt({
+            model: modelUsed,
+            category: "none",
+            retryCount,
+            durationMs: processingDurationMs
           });
-          jsonText = aiResponse.text?.trim() || "";
-        } catch (geminiErr) {
-          console.warn("Gemini 3.8 Flash failed for extraction, trying fallback model gemini-3.5-flash:", geminiErr?.message);
-          const fallbackResponse = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: contentsPayload,
-            config: {
-              responseMimeType: "application/json"
-            }
-          });
-          jsonText = fallbackResponse.text?.trim() || "";
-        }
-        if (jsonText) {
-          const cleanJson = jsonText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
-          try {
-            const parsed = JSON.parse(cleanJson);
-            if (Array.isArray(parsed)) {
-              extractedQuestions = parsed;
-            } else if (parsed.questions && Array.isArray(parsed.questions)) {
-              extractedQuestions = parsed.questions;
-            }
-          } catch (e) {
-            console.error("Failed to parse AI JSON response:", e);
+        } catch (error) {
+          const category = error instanceof GeminiResilienceError ? error.category : error instanceof GeminiResponseError ? error.category : classifyGeminiError(error);
+          const details = error instanceof GeminiResilienceError ? {
+            model: error.model,
+            retryCount: error.retryCount,
+            durationMs: Math.max(
+              error.durationMs,
+              Date.now() - processingStartedAt
+            )
+          } : {
+            model: modelUsed,
+            retryCount,
+            durationMs: Math.max(
+              processingDurationMs,
+              Date.now() - processingStartedAt
+            )
+          };
+          logExtractionAttempt({ ...details, category });
+          if (!(error instanceof GeminiResponseError)) {
+            throw error;
           }
         }
       }
@@ -459,12 +835,15 @@ H\xE3y \u0111\u1ECDc to\xE0n b\u1ED9 t\xE0i li\u1EC7u PDF tr\xEAn (${fileName}) 
         error: "Kh\xF4ng th\u1EC3 \u0111\u1ECDc n\u1ED9i dung c\xE2u h\u1ECFi t\u1EEB file n\xE0y, vui l\xF2ng ki\u1EC3m tra l\u1EA1i \u0111\u1ECBnh d\u1EA1ng ho\u1EB7c nh\u1EADp th\u1EE7 c\xF4ng."
       });
     } catch (err) {
-      console.error(`Error processing file ${fileName}:`, err?.message);
+      if (requestAbortController.signal.aborted || res.destroyed) return;
       return res.json({
         success: false,
         fileName,
-        error: `Kh\xF4ng th\u1EC3 \u0111\u1ECDc file n\xE0y (${err?.message || "L\u1ED7i x\u1EED l\xFD"}). Vui l\xF2ng th\u1EED l\u1EA1i ho\u1EB7c nh\u1EADp th\u1EE7 c\xF4ng.`
+        error: getExtractionErrorMessage(err)
       });
+    } finally {
+      req.removeListener("aborted", onRequestAborted);
+      res.removeListener("close", onResponseClosed);
     }
   });
   function parseQuestionsFromDocxText(text, fileName) {

@@ -32,6 +32,14 @@ changes.
 5. Keep preview deployment variables separate from production values. A GitHub
    pull request can then create a preview deployment without changing the
    production deployment.
+6. Document extraction uses `GEMINI_PRIMARY_MODEL` when set, otherwise
+   `gemini-3.8-flash`. Set `GEMINI_FALLBACK_MODEL` only after enabling and
+   validating the model for the same Gemini API project. For example,
+   `gemini-2.5-flash` supports the PDF/image input and JSON output used here.
+   The fallback is opt-in because it can incur additional Gemini usage costs.
+   `GEMINI_ATTEMPT_TIMEOUT_MS` defaults to 30 seconds per attempt, and
+   `GEMINI_EXTRACTION_DEADLINE_MS` defaults to 180 seconds for the extraction
+   generation sequence. Keep the latter below the deployed Function timeout.
 
 The client uses same-origin `/api/*` paths. Do not add a hard-coded deployment
 URL or expose server secrets through Vite environment variables.
@@ -97,13 +105,25 @@ seconds on Hobby; Pro/Enterprise can configure higher durations. Gemini's
 [document guidance](https://ai.google.dev/gemini-api/docs/document-processing)
 recommends its Files API for larger PDFs.
 
-The current Gemini calls include retries and have no explicit end-to-end
-deadline, and uploads have no application size cap. Therefore this synchronous
-path cannot be represented as reliable for arbitrary uploaded documents on a
-Vercel Function. The migration needs an approved maximum file size and an
-architecture decision: bounded synchronous processing for small files, or a
-separate asynchronous worker for unrestricted/long-running extraction. This
-change does not move extraction to a worker or change upload semantics.
+Document extraction retries transient Gemini overload/rate-limit failures at
+most twice on the primary model with jittered backoff, honors `Retry-After`,
+uses a per-attempt timeout, and stops before its overall deadline to preserve
+time for an HTTP response. The Google SDK's own retry layer is disabled for
+these calls so attempts stay bounded. After primary retries are exhausted, a
+configured fallback gets one attempt. A 429 quota/billing exhaustion is
+reported separately and is not retried. Cross-model failover runs only after
+transient failures and only when `GEMINI_FALLBACK_MODEL` is configured.
+The SDK abort signal bounds client-side waiting; cancelling a request cannot
+guarantee Gemini has stopped server-side processing or that usage charges are
+avoided.
+
+These limits bound Gemini request time, not document parsing or arbitrary
+upload sizes. The synchronous path still cannot be represented as reliable for
+arbitrary uploaded documents on a Vercel Function. The migration needs an
+approved maximum file size and an architecture decision: bounded synchronous
+processing for small files, or a separate asynchronous worker for
+unrestricted/long-running extraction. This change does not move extraction to
+a worker or change upload semantics.
 
 ## Troubleshooting
 

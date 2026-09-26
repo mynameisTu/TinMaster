@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { extractQuestionsFromFile } from '../src/services/exerciseService';
+import {
+  classifyGeminiError,
+  generateWithGeminiResilience,
+  GeminiResilienceError,
+  GeminiResponseError,
+  getRetryAfterMs,
+  parseAndValidateExtractedQuestions,
+} from '../src/server/geminiResilience';
 
 const testGeminiSecret = 'unit-test-gemini-secret';
 process.env.GEMINI_API_KEY = testGeminiSecret;
@@ -73,6 +81,78 @@ test('file extraction rejects an invalid upload using the existing response shap
     success: false,
     error: 'Dữ liệu file không hợp lệ hoặc thiếu thông tin.',
   });
+});
+
+test('document extraction retries a mocked 503 and preserves its API response contract', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const originalApiKey = process.env.GEMINI_API_KEY;
+  const originalFallbackModel = process.env.GEMINI_FALLBACK_MODEL;
+  const messages: string[] = [];
+  let geminiCalls = 0;
+  const question = {
+    questionType: 'single_choice',
+    stem: 'Kết quả của phép tính là gì?',
+    singleChoiceOptions: ['A', 'B', 'C', 'D'].map((label) => ({
+      label,
+      text: `Phương án ${label}`,
+      isCorrect: label === 'B',
+    })),
+  };
+
+  process.env.GEMINI_API_KEY = 'mock-server-only-key';
+  delete process.env.GEMINI_FALLBACK_MODEL;
+  console.info = (...args: unknown[]) => messages.push(args.join(' '));
+  globalThis.fetch = async () => {
+    geminiCalls += 1;
+    if (geminiCalls === 1) {
+      return new Response(JSON.stringify({
+        error: { code: 503, message: 'Temporary service unavailable', status: 'UNAVAILABLE' },
+      }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '0' },
+      });
+    }
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify([question]) }] } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const response = await originalFetch(`${baseUrl}/api/exercises/extract-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: {
+          name: 'private-document.png',
+          mimeType: 'image/png',
+          base64: 'data:image/png;base64,c2Vuc2l0aXZlLWRvY3VtZW50',
+        },
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(Object.keys(body).sort(), ['count', 'fileName', 'questions', 'success']);
+    assert.equal(body.success, true);
+    assert.equal(body.count, 1);
+    assert.equal(body.questions[0].stem, question.stem);
+    assert.equal(geminiCalls, 2);
+    assert.ok(messages.some((message) => message.includes('"retryCount":1')));
+    assert.ok(messages.every((message) => !message.includes('private-document.png')));
+    assert.ok(messages.every((message) => !message.includes('c2Vuc2l0aXZlLWRvY3VtZW50')));
+    assert.ok(messages.every((message) => !message.includes('mock-server-only-key')));
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.info = originalInfo;
+    if (originalApiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalApiKey;
+    if (originalFallbackModel === undefined) delete process.env.GEMINI_FALLBACK_MODEL;
+    else process.env.GEMINI_FALLBACK_MODEL = originalFallbackModel;
+  }
 });
 
 test('AI endpoints retain their no-key fallback contracts', async () => {
@@ -170,4 +250,309 @@ test('exercise extraction preserves successful response payloads', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+const fastGeminiOptions = {
+  primaryModel: 'gemini-primary-test',
+  fallbackModel: 'gemini-fallback-test',
+  maxRetries: 2,
+  perAttemptTimeoutMs: 40,
+  overallDeadlineMs: 300,
+  responseReserveMs: 10,
+  random: () => 0,
+  sleep: async () => {},
+};
+
+test('Gemini resilience returns first-attempt success without retrying', async () => {
+  let calls = 0;
+  const result = await generateWithGeminiResilience(
+    async (model) => {
+      calls += 1;
+      return `${model}-response`;
+    },
+    fastGeminiOptions
+  );
+
+  assert.equal(result.value, 'gemini-primary-test-response');
+  assert.equal(result.model, 'gemini-primary-test');
+  assert.equal(result.retryCount, 0);
+  assert.equal(calls, 1);
+});
+
+test('Gemini resilience recovers from HTTP 503 with a bounded retry', async () => {
+  let calls = 0;
+  const result = await generateWithGeminiResilience(
+    async () => {
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error('Service unavailable'), { status: 503 });
+      return 'recovered';
+    },
+    fastGeminiOptions
+  );
+
+  assert.equal(result.value, 'recovered');
+  assert.equal(result.retryCount, 1);
+  assert.equal(calls, 2);
+});
+
+test('Gemini resilience exhausts after two additional attempts', async () => {
+  let calls = 0;
+  await assert.rejects(
+    generateWithGeminiResilience(
+      async () => {
+        calls += 1;
+        throw Object.assign(new Error('Service unavailable'), { status: 503 });
+      },
+      { ...fastGeminiOptions, fallbackModel: undefined }
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GeminiResilienceError);
+      assert.equal(error.category, 'overloaded');
+      assert.equal(error.retryCount, 2);
+      assert.equal(error.fallbackConfigured, false);
+      assert.match(error.message, /no fallback model is configured/);
+      return true;
+    }
+  );
+  assert.equal(calls, 3);
+});
+
+test('Gemini resilience switches to configured fallback after primary overload', async () => {
+  const models: string[] = [];
+  const result = await generateWithGeminiResilience(
+    async (model) => {
+      models.push(model);
+      if (model === 'gemini-primary-test') {
+        throw Object.assign(new Error('Service unavailable'), { status: 503 });
+      }
+      return 'fallback response';
+    },
+    fastGeminiOptions
+  );
+
+  assert.equal(result.value, 'fallback response');
+  assert.equal(result.model, 'gemini-fallback-test');
+  assert.equal(result.retryCount, 3);
+  assert.deepEqual(models, [
+    'gemini-primary-test',
+    'gemini-primary-test',
+    'gemini-primary-test',
+    'gemini-fallback-test',
+  ]);
+});
+
+test('Gemini resilience reports fallback failure without retrying the fallback model', async () => {
+  let calls = 0;
+  await assert.rejects(
+    generateWithGeminiResilience(
+      async () => {
+        calls += 1;
+        throw Object.assign(new Error('Service unavailable'), { status: 503 });
+      },
+      fastGeminiOptions
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GeminiResilienceError);
+      assert.equal(error.category, 'overloaded');
+      assert.equal(error.retryCount, 3);
+      assert.equal(error.fallbackConfigured, true);
+      return true;
+    }
+  );
+  assert.equal(calls, 4);
+});
+
+test('Gemini fallback output is validated before accepting extracted questions', async () => {
+  const fallbackQuestions = JSON.stringify([
+    {
+      questionType: 'single_choice',
+      stem: 'Fallback question',
+      singleChoiceOptions: ['A', 'B', 'C', 'D'].map((label) => ({
+        label,
+        text: `Option ${label}`,
+        isCorrect: label === 'C',
+      })),
+    },
+  ]);
+  const result = await generateWithGeminiResilience(
+    async (model) => {
+      if (model === 'gemini-primary-test') {
+        throw Object.assign(new Error('Service unavailable'), { status: 503 });
+      }
+      return fallbackQuestions;
+    },
+    fastGeminiOptions
+  );
+
+  assert.equal(result.model, 'gemini-fallback-test');
+  assert.equal(parseAndValidateExtractedQuestions(result.value)[0].stem, 'Fallback question');
+});
+
+test('Gemini quota exhaustion is distinguished and is not retried', async () => {
+  let calls = 0;
+  const quotaError = Object.assign(
+    new Error('You exceeded your current quota; check your billing configuration.'),
+    { status: 429 }
+  );
+  assert.equal(classifyGeminiError(quotaError), 'quota_exhausted');
+  assert.equal(
+    classifyGeminiError(Object.assign(new Error('Rate limit exceeded'), { status: 429 })),
+    'rate_limited'
+  );
+  assert.equal(
+    classifyGeminiError(Object.assign(new Error('Bad gateway'), { status: 502 })),
+    'overloaded'
+  );
+  assert.equal(
+    classifyGeminiError(Object.assign(new Error('Gateway timeout'), { status: 504 })),
+    'overloaded'
+  );
+
+  await assert.rejects(
+    generateWithGeminiResilience(
+      async () => {
+        calls += 1;
+        throw quotaError;
+      },
+      fastGeminiOptions
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GeminiResilienceError);
+      assert.equal(error.category, 'quota_exhausted');
+      return true;
+    }
+  );
+  assert.equal(calls, 1);
+});
+
+test('Gemini 429 rate limiting retries and Retry-After is parsed', async () => {
+  let calls = 0;
+  const result = await generateWithGeminiResilience(
+    async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error('Rate limit exceeded'), {
+          status: 429,
+          retryAfterMs: 10,
+        });
+      }
+      return 'recovered';
+    },
+    { ...fastGeminiOptions, sleep: async () => {} }
+  );
+
+  assert.equal(result.value, 'recovered');
+  assert.equal(getRetryAfterMs('2'), 2_000);
+  assert.equal(getRetryAfterMs('Thu, 01 Jan 1970 00:00:02 GMT', 0), 2_000);
+  assert.equal(calls, 2);
+});
+
+test('Gemini stops retrying when Retry-After cannot fit before the deadline', async () => {
+  let calls = 0;
+  await assert.rejects(
+    generateWithGeminiResilience(
+      async () => {
+        calls += 1;
+        throw Object.assign(new Error('Rate limit exceeded'), {
+          status: 429,
+          retryAfterMs: 1_000,
+        });
+      },
+      {
+        ...fastGeminiOptions,
+        fallbackModel: undefined,
+        overallDeadlineMs: 200,
+        responseReserveMs: 10,
+      }
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GeminiResilienceError);
+      assert.equal(error.category, 'deadline_exceeded');
+      assert.equal(error.retryCount, 0);
+      return true;
+    }
+  );
+  assert.equal(calls, 1);
+});
+
+test('Gemini request timeout is bounded and cancellation stops further attempts', async () => {
+  let timeoutCalls = 0;
+  await assert.rejects(
+    generateWithGeminiResilience(
+      async (_model, attempt) => {
+        timeoutCalls += 1;
+        return new Promise<string>((_, reject) => {
+          attempt.signal.addEventListener('abort', () => reject(new Error('request timed out')), {
+            once: true,
+          });
+        });
+      },
+      {
+        ...fastGeminiOptions,
+        fallbackModel: undefined,
+        perAttemptTimeoutMs: 10,
+        overallDeadlineMs: 200,
+      }
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GeminiResilienceError);
+      assert.equal(error.category, 'timeout');
+      return true;
+    }
+  );
+  assert.equal(timeoutCalls, 3);
+
+  const cancellation = new AbortController();
+  const pending = generateWithGeminiResilience(
+    async (_model, attempt) =>
+      new Promise<string>((_, reject) => {
+        attempt.signal.addEventListener('abort', () => reject(new Error('cancelled')), {
+          once: true,
+        });
+      }),
+    { ...fastGeminiOptions, signal: cancellation.signal }
+  );
+  cancellation.abort();
+  await assert.rejects(
+    pending,
+    (error: unknown) => {
+      assert.ok(error instanceof GeminiResilienceError);
+      assert.equal(error.category, 'cancelled');
+      return true;
+    }
+  );
+});
+
+test('Gemini response parser rejects invalid JSON and malformed question schema', () => {
+  assert.throws(
+    () => parseAndValidateExtractedQuestions('{invalid'),
+    (error: unknown) => error instanceof GeminiResponseError && error.category === 'invalid_json'
+  );
+  assert.throws(
+    () =>
+      parseAndValidateExtractedQuestions(
+        JSON.stringify([{ questionType: 'single_choice', stem: 'Question', singleChoiceOptions: [] }])
+      ),
+    (error: unknown) => error instanceof GeminiResponseError && error.category === 'invalid_schema'
+  );
+});
+
+test('Gemini response parser accepts the existing structured question format', () => {
+  const questions = parseAndValidateExtractedQuestions(
+    JSON.stringify({
+      questions: [
+        {
+          questionType: 'single_choice',
+          stem: 'Question',
+          singleChoiceOptions: ['A', 'B', 'C', 'D'].map((label) => ({
+            label,
+            text: `Option ${label}`,
+            isCorrect: label === 'A',
+          })),
+        },
+      ],
+    })
+  );
+  assert.equal(questions.length, 1);
+  assert.equal(questions[0].stem, 'Question');
 });
