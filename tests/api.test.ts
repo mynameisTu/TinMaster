@@ -3,7 +3,7 @@ import { after, before, test } from 'node:test';
 
 const testGeminiSecret = 'unit-test-gemini-secret';
 process.env.GEMINI_API_KEY = testGeminiSecret;
-const { default: app } = await import('../src/server/api');
+const { default: app } = await import('../api/[...path].js');
 
 let baseUrl = '';
 let server: ReturnType<typeof app.listen>;
@@ -37,6 +37,12 @@ test('health endpoint retains its response contract without exposing credentials
   assert.equal(body.geminiConfigured, true);
   assert.equal(JSON.stringify(body).includes(testGeminiSecret), false);
   process.env.GEMINI_API_KEY = '';
+
+  const noCredentialResponse = await fetch(`${baseUrl}/api/health`);
+  const noCredentialBody = await noCredentialResponse.json();
+  assert.equal(noCredentialResponse.status, 200);
+  assert.equal(noCredentialBody.status, 'ok');
+  assert.equal(noCredentialBody.geminiConfigured, false);
 });
 
 test('file extraction rejects an invalid upload using the existing response shape', async () => {
