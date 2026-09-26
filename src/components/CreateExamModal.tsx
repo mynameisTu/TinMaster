@@ -11,6 +11,7 @@ import {
   CognitiveLevel,
 } from '../types';
 import { SAMPLE_QUESTION_BANK } from '../data/questionBank';
+import { extractQuestionsFromFile } from '../services/exerciseService';
 import {
   PlusCircle,
   X,
@@ -209,20 +210,14 @@ export const CreateExamModal: React.FC<CreateExamModalProps> = ({
         } catch {}
       }
 
-      const response = await fetch('/api/exercises/extract-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file: {
-            name: mainQuestionFile.name,
-            mimeType: mainQuestionFile.type,
-            base64: base64Data,
-          },
-          answerKeyFile: answerKeyPayload,
-        }),
-      });
-
-      const data = await response.json();
+      const data = await extractQuestionsFromFile(
+        {
+          name: mainQuestionFile.name,
+          mimeType: mainQuestionFile.type,
+          base64: base64Data,
+        },
+        answerKeyPayload
+      );
 
       if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
         setUploadedQuestions(data.questions);

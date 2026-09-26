@@ -8,6 +8,7 @@ import {
   TrueFalseStatement,
 } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
+import { extractQuestionsFromFile } from '../services/exerciseService';
 import {
   Upload,
   FileText,
@@ -233,24 +234,19 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
       try {
         const base64Data = await fileToBase64(current.file);
 
-        const response = await fetch('/api/exercises/extract-file', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            file: {
-              name: current.name,
-              type: current.typeCategory,
-              mimeType: current.file.type,
-              base64: base64Data,
-            },
-            answerKeyFile: answerKeyPayload,
-          }),
-        });
-
-        const data = await response.json();
+        const data = await extractQuestionsFromFile(
+          {
+            name: current.name,
+            type: current.typeCategory,
+            mimeType: current.file.type,
+            base64: base64Data,
+          },
+          answerKeyPayload
+        );
 
         if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
-          const uniqueBatchQuestions = data.questions.map((q: any, qIdx: number) => ({
+          const extractedQuestions = data.questions;
+          const uniqueBatchQuestions = extractedQuestions.map((q, qIdx) => ({
             ...q,
             id: q.id
               ? `${q.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${qIdx + 1}`
@@ -263,7 +259,7 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
                 ? {
                     ...item,
                     status: 'completed',
-                    extractedCount: data.questions.length,
+                    extractedCount: extractedQuestions.length,
                   }
                 : item
             )
