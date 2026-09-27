@@ -13,7 +13,6 @@ import {
   Mail,
   User,
   LogOut,
-  Check,
   X,
   Play,
   FileText,
@@ -28,11 +27,11 @@ import {
 
 interface HeaderProps {
   user: UserProfile;
-  onRoleChange: (role: UserRole) => void;
+  onSignOut: () => void;
+  onRedeemTeacherInvitation: () => void;
   activeTab: string;
   onTabChange: (tab: string) => void;
   onOpenVideoModal?: () => void;
-  onOpenGoogleSignIn?: () => void;
   onOpenGoogleWorkspace?: () => void;
   onOpenTrackModal?: () => void;
   onSelectTrack?: (track: ExamTrack) => void;
@@ -40,11 +39,11 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   user,
-  onRoleChange,
+  onSignOut,
+  onRedeemTeacherInvitation,
   activeTab,
   onTabChange,
   onOpenVideoModal,
-  onOpenGoogleSignIn,
   onOpenGoogleWorkspace,
   onOpenTrackModal,
   onSelectTrack,
@@ -173,7 +172,7 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 Lộ trình
               </button>
-              <button
+              {(user.role === 'teacher' || user.role === 'admin') && <button
                 onClick={() => onTabChange('teacher_view')}
                 className={`text-xs font-semibold transition cursor-pointer flex items-center h-full border-b-2 pt-0.5 ${
                   activeTab === 'teacher_view'
@@ -182,18 +181,22 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 Phân tích Lớp
-              </button>
+              </button>}
               {user.role === 'admin' && (
-                <button
-                  onClick={() => onTabChange('research_admin')}
-                  className={`text-xs font-semibold transition cursor-pointer flex items-center h-full border-b-2 pt-0.5 ${
-                    activeTab === 'research_admin'
-                      ? 'opacity-100 border-[#2563eb] text-[#1e293b] font-bold'
-                      : 'opacity-70 hover:opacity-100 text-[#1e293b] border-transparent'
-                  }`}
-                >
-                  Quản lý hệ thống
-                </button>
+                <>
+                  <button
+                    onClick={() => window.location.assign('/admin/dashboard')}
+                    className="text-xs font-semibold transition cursor-pointer flex items-center h-full border-b-2 pt-0.5 opacity-70 hover:opacity-100 text-[#1e293b] border-transparent"
+                  >
+                    Quản lý hệ thống
+                  </button>
+                  <button
+                    onClick={() => window.location.assign('/admin/setup-password')}
+                    className="text-xs font-semibold transition cursor-pointer flex items-center h-full border-b-2 pt-0.5 opacity-70 hover:opacity-100 text-[#1e293b] border-transparent"
+                  >
+                    Thiết lập mật khẩu admin
+                  </button>
+                </>
               )}
               {onOpenVideoModal && (
                 <button
@@ -289,63 +292,22 @@ export const Header: React.FC<HeaderProps> = ({
                       </div>
                     </div>
 
-                    {/* Section: Select Role */}
-                    <div className="py-1.5 border-b border-[#e5e7eb]">
-                      <div className="px-3 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider font-sans">
-                        Chuyển đổi vai trò:
-                      </div>
-
-                      {(['student', 'teacher', 'admin'] as UserRole[]).map((r) => {
-                        const isActive = user.role === r;
-                        return (
-                          <button
-                            key={r}
-                            onClick={() => {
-                              onRoleChange(r);
-                              setDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-2 flex items-center justify-between transition cursor-pointer ${
-                              isActive
-                                ? 'bg-[#f0f7ff] text-[#0066cc] font-semibold border-l-3 border-[#0066cc]'
-                                : 'text-slate-700 hover:bg-[#f8fafc]'
-                            }`}
-                          >
-                            <div className="flex items-center space-x-2">
-                              <span className={`mono text-xs px-1.5 py-0.5 rounded font-bold ${
-                                isActive ? 'bg-[#0066cc] text-white' : 'bg-slate-100 text-slate-600'
-                              }`}>
-                                {roleLabels[r].icon}
-                              </span>
-                              <div>
-                                <div className="text-xs font-semibold">{roleLabels[r].label}</div>
-                                <div className="text-[10px] text-slate-500">{roleLabels[r].desc}</div>
-                              </div>
-                            </div>
-                            {isActive && <Check className="w-4 h-4 text-[#0066cc]" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-
                     {/* Section: Account Actions */}
                     <div className="py-1">
-                      {onOpenGoogleSignIn && (
-                        <button
-                          onClick={() => {
-                            setDropdownOpen(false);
-                            onOpenGoogleSignIn();
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-[#f8fafc] flex items-center space-x-2 transition cursor-pointer"
-                        >
-                          <Mail className="w-3.5 h-3.5 text-[#0066cc]" />
-                          <span>Đăng nhập Gmail khác</span>
-                        </button>
-                      )}
-
                       <button
                         onClick={() => {
                           setDropdownOpen(false);
-                          if (onOpenGoogleSignIn) onOpenGoogleSignIn();
+                          onRedeemTeacherInvitation();
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-[#f8fafc] flex items-center space-x-2 transition cursor-pointer"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#0066cc]" />
+                        <span>Nhập mã mời giáo viên</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDropdownOpen(false);
+                          onSignOut();
                         }}
                         className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center space-x-2 transition cursor-pointer border-t border-slate-100"
                       >
@@ -487,9 +449,36 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="tracking-wider">SUBMISSIONS</span>
                   <span className="text-xs text-slate-500">Lịch sử bài làm</span>
                 </button>
+                {(user.role === 'teacher' || user.role === 'admin') && (
+                  <button
+                    onClick={() => handleNavClick('teacher_view')}
+                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                  >
+                    <span className="tracking-wider">TEACHER</span>
+                    <span className="text-xs text-slate-500">Phân tích lớp</span>
+                  </button>
+                )}
+                {user.role === 'admin' && (
+                  <>
+                    <button
+                      onClick={() => window.location.assign('/admin/dashboard')}
+                      className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                    >
+                      <span className="tracking-wider">ADMIN</span>
+                      <span className="text-xs text-slate-500">Quản lý hệ thống</span>
+                    </button>
+                    <button
+                      onClick={() => window.location.assign('/admin/setup-password')}
+                      className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                    >
+                      <span className="tracking-wider">PASSWORD</span>
+                      <span className="text-xs text-slate-500">Thiết lập hoặc đổi</span>
+                    </button>
+                  </>
+                )}
               </div>
 
-              {/* 5. USERS > (Expandable like VNOI) */}
+              {/* 5. USERS > (role is read-only and sourced from Supabase) */}
               <div className="py-1">
                 <button
                   onClick={() => setExpandedUsers(!expandedUsers)}
@@ -503,34 +492,8 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
 
                 {expandedUsers && (
-                  <div className="bg-[#14171d] my-1 rounded border border-[#2d333b] overflow-hidden">
-                    {(['student', 'teacher', 'admin'] as UserRole[]).map((r) => {
-                      const isActive = user.role === r;
-                      return (
-                        <button
-                          key={r}
-                          onClick={() => {
-                            onRoleChange(r);
-                            if (r === 'teacher') handleNavClick('teacher_view');
-                            else if (r === 'admin') handleNavClick('research_admin');
-                            else handleNavClick('dashboard');
-                          }}
-                          className={`w-full text-left px-3.5 py-2 flex items-center justify-between text-xs transition cursor-pointer ${
-                            isActive
-                              ? 'bg-[#1e2530] text-[#00e599] font-bold'
-                              : 'text-slate-400 hover:text-white hover:bg-[#191d24]'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            <span className="text-[10px] mono px-1 py-0.5 rounded bg-[#232832] text-slate-300">
-                              {roleLabels[r].icon}
-                            </span>
-                            <span>{roleLabels[r].label}</span>
-                          </div>
-                          {isActive && <Check className="w-3.5 h-3.5 text-[#00e599]" />}
-                        </button>
-                      );
-                    })}
+                  <div className="bg-[#14171d] my-1 rounded border border-[#2d333b] px-4 py-3 text-xs text-slate-300">
+                    Vai trò được xác thực: <strong>{roleLabels[user.role].label}</strong>
                   </div>
                 )}
 
@@ -606,18 +569,26 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Bottom Actions: Log in / Sign up / Switch Gmail */}
             <div className="p-3 border-t border-[#2d333b] bg-[#16191f] space-y-2">
-              {onOpenGoogleSignIn ? (
-                <button
-                  onClick={() => {
-                    setMobileDrawerOpen(false);
-                    onOpenGoogleSignIn();
-                  }}
-                  className="w-full py-2 px-3 bg-[#0066cc] hover:bg-[#0052a3] text-white rounded text-xs font-bold font-sans flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs"
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>Đăng nhập Gmail (@gmail.com)</span>
-                </button>
-              ) : null}
+              <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  onRedeemTeacherInvitation();
+                }}
+                className="w-full py-2 px-3 border border-slate-600 text-slate-200 rounded text-xs font-bold flex items-center justify-center space-x-2"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Nhập mã mời giáo viên</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  onSignOut();
+                }}
+                className="w-full py-2 px-3 bg-red-700 hover:bg-red-600 text-white rounded text-xs font-bold flex items-center justify-center space-x-2"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Đăng xuất</span>
+              </button>
 
               <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 px-1">
                 <span>© 2025 TinMaster OJ</span>

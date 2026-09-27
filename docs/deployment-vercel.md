@@ -11,8 +11,9 @@ npm run dev
 
 The local workflow remains the Express server in `server.ts` and is available at
 `http://localhost:3000`. It serves Vite middleware in development and keeps the
-existing `/api/*` routes. Set `GEMINI_API_KEY` in an ignored local `.env` file to
-enable Gemini. Without it, the existing API fallbacks remain available.
+existing `/api/*` routes. Set `GEMINI_API_KEY`, `VITE_SUPABASE_URL`, and
+`VITE_SUPABASE_ANON_KEY` in an ignored local `.env` file. AI and extraction API
+routes require a valid Supabase Auth session; `/api/health` remains public.
 
 Run `npm run lint`, `npm run build`, and `npm run test:api` before pushing
 changes.
@@ -29,10 +30,17 @@ changes.
 4. Add `GEMINI_API_KEY` in Vercel Project Settings → Environment Variables for
    the environments that should serve Gemini requests. It is server-only and
    must not use a `VITE_` prefix.
-5. Keep preview deployment variables separate from production values. A GitHub
+5. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to Preview and
+   Production for the browser. Also configure server-only `SUPABASE_URL` and
+   `SUPABASE_ANON_KEY` for API token and profile-role verification. These values
+   are the same public project URL/key, not service-role credentials.
+   Configure `VITE_AUTH_ALLOWED_ORIGINS` as comma-separated exact origins for
+   the production domain and approved preview URLs. Add the same redirect URLs,
+   including `/reset-password`, to Supabase Auth's allowlist.
+6. Keep preview deployment variables separate from production values. A GitHub
    pull request can then create a preview deployment without changing the
    production deployment.
-6. Document extraction uses `GEMINI_PRIMARY_MODEL` when set, otherwise
+7. Document extraction uses `GEMINI_PRIMARY_MODEL` when set, otherwise
    `gemini-3.8-flash`. Set `GEMINI_FALLBACK_MODEL` only after enabling and
    validating the model for the same Gemini API project. For example,
    `gemini-2.5-flash` supports the PDF/image input and JSON output used here.
@@ -40,6 +48,20 @@ changes.
    `GEMINI_ATTEMPT_TIMEOUT_MS` defaults to 30 seconds per attempt, and
    `GEMINI_EXTRACTION_DEADLINE_MS` defaults to 180 seconds for the extraction
    generation sequence. Keep the latter below the deployed Function timeout.
+8. Apply `supabase/migrations/20260926150000_gemini_api_rate_limits.sql` to
+   enable shared authenticated per-user Gemini limits. The defaults are 30
+   explanations/minute, 5 video scripts/minute, and 5 extractions/minute. These
+   independent limits are stored in Supabase Postgres and apply to localhost
+   and all Vercel instances. Adjust them with privileged SQL:
+
+   ```sql
+   update private.api_rate_limit_config
+   set limit_count = 20, window_seconds = 60, updated_at = now()
+   where endpoint = '/api/ai/explain';
+   ```
+
+   The API fails closed with HTTP 503 if the shared limiter cannot be reached;
+   it does not fall back to instance-local counters.
 
 The client uses same-origin `/api/*` paths. Do not add a hard-coded deployment
 URL or expose server secrets through Vite environment variables.
@@ -60,14 +82,15 @@ sends the file (and optional answer key) as base64 JSON to
 Local Express keeps its existing 50 MB parser limit. Vercel Functions have a
 4.5 MB request/response payload limit, and this app limits Vercel JSON parsing to
 4 MB, so larger encoded requests will fail rather than being processed. Do not
-use this Vercel endpoint for large documents. The current sign-in UI is not
-verified authentication and must not authorize uploads.
+use this Vercel endpoint for large documents. Google sign-in is now backed by
+Supabase Auth, but uploads have not yet been migrated to private Storage; do
+not treat current upload metadata as an authorization mechanism.
 
 Before enabling private direct uploads, configure:
 
 - A Supabase project URL.
-- The Supabase anon/publishable key for a future browser Auth client (public,
-  but only safe when policies are correctly restricted).
+- The Supabase anon/publishable key (already used for browser authentication;
+  Storage access still requires its own restrictive policies).
 - A **private** bucket, recommended name `exercise-uploads`, with no public
   read policy or anonymous write policy.
 - Supabase Auth with a real user session and a defined owner identity.

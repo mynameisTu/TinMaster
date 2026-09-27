@@ -20,3 +20,6 @@ https://ai.studio/apps/be286383-26c1-4057-bd6d-1f1c383bd56a
 
 For Vercel deployment and the current Supabase Storage upload limitations, see
 [the deployment guide](docs/deployment-vercel.md).
+
+For Google OAuth, Supabase Auth, initial administrator provisioning, and
+teacher-role security setup, see [the Supabase Auth guide](docs/supabase-auth-setup.md).

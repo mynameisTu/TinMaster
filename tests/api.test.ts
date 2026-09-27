@@ -9,9 +9,44 @@ import {
   getRetryAfterMs,
   parseAndValidateExtractedQuestions,
 } from '../src/server/geminiResilience';
+import {
+  configureAccessTokenVerifier,
+  configureProfileRoleResolver,
+} from '../src/server/supabaseAuth';
+import {
+  configureRateLimitConsumer,
+  type RateLimitEndpoint,
+} from '../src/server/rateLimit';
 
 const testGeminiSecret = 'unit-test-gemini-secret';
 process.env.GEMINI_API_KEY = testGeminiSecret;
+let failTokenVerification = false;
+const restoreAccessTokenVerifier = configureAccessTokenVerifier(async (token) => {
+  if (failTokenVerification) throw new Error('auth service unavailable');
+  if (token === 'test-access-token') return { id: 'verified-test-user' } as never;
+  if (token === 'second-user-token') return { id: 'second-verified-user' } as never;
+  return null;
+});
+let testProfileRole: 'student' | 'teacher' | 'admin' | null = 'admin';
+let failProfileLookup = false;
+const restoreProfileRoleResolver = configureProfileRoleResolver(async (userId) => {
+  assert.ok(['verified-test-user', 'second-verified-user'].includes(userId));
+  if (failProfileLookup) throw new Error('database unavailable');
+  return testProfileRole;
+});
+const rateLimitCounts = new Map<string, number>();
+const rateLimitCalls: Array<{ userId: string; endpoint: RateLimitEndpoint }> = [];
+const rateLimitLimits = new Map<RateLimitEndpoint, number>();
+const restoreRateLimitConsumer = configureRateLimitConsumer(async (userId, endpoint) => {
+  rateLimitCalls.push({ userId, endpoint });
+  const key = `${userId}:${endpoint}`;
+  const count = (rateLimitCounts.get(key) ?? 0) + 1;
+  rateLimitCounts.set(key, count);
+  return {
+    allowed: count <= (rateLimitLimits.get(endpoint) ?? 1000),
+    retryAfterSeconds: 37,
+  };
+});
 const { default: app } = await import('../api/[...path].js');
 const { default: extractFileApp } = await import('../api/exercises/extract-file.js');
 
@@ -27,6 +62,9 @@ before(async () => {
 });
 
 after(async () => {
+  restoreAccessTokenVerifier();
+  restoreProfileRoleResolver();
+  restoreRateLimitConsumer();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
@@ -66,7 +104,10 @@ test('file extraction rejects an invalid upload using the existing response shap
   try {
     response = await fetch(`http://127.0.0.1:${address.port}/api/exercises/extract-file`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
       body: JSON.stringify({ file: { name: 'invalid.pdf' } }),
     });
     body = await response.json();
@@ -124,7 +165,10 @@ test('document extraction retries a mocked 503 and preserves its API response co
   try {
     const response = await originalFetch(`${baseUrl}/api/exercises/extract-file`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
       body: JSON.stringify({
         file: {
           name: 'private-document.png',
@@ -158,7 +202,10 @@ test('document extraction retries a mocked 503 and preserves its API response co
 test('AI endpoints retain their no-key fallback contracts', async () => {
   const explanationResponse = await fetch(`${baseUrl}/api/ai/explain`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer test-access-token',
+    },
     body: JSON.stringify({
       question: { stem: 'Question', explanation: 'Expected explanation' },
       userAnswer: 'A',
@@ -175,7 +222,10 @@ test('AI endpoints retain their no-key fallback contracts', async () => {
 
   const videoResponse = await fetch(`${baseUrl}/api/ai/video-script`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer test-access-token',
+    },
     body: JSON.stringify({
       conceptId: 'C01',
       conceptName: 'Python',
@@ -187,6 +237,232 @@ test('AI endpoints retain their no-key fallback contracts', async () => {
   assert.deepEqual(await videoResponse.json(), {
     error: 'Gemini API not configured',
   });
+});
+
+test('AI and extraction endpoints reject missing or invalid Supabase sessions', async () => {
+  const callsBefore = rateLimitCalls.length;
+  const response = await fetch(`${baseUrl}/api/ai/explain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: 'Authentication required',
+    code: 'AUTH_REQUIRED',
+  });
+
+  const invalidResponse = await fetch(`${baseUrl}/api/exercises/extract-file`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer expired-token',
+    },
+    body: JSON.stringify({ file: { name: 'sample.pdf', base64: 'data' } }),
+  });
+  assert.equal(invalidResponse.status, 401);
+  assert.deepEqual(await invalidResponse.json(), {
+    error: 'Invalid or expired authentication session',
+    code: 'AUTH_INVALID',
+  });
+  assert.equal(rateLimitCalls.length, callsBefore);
+});
+
+test('students cannot use document extraction and teachers/admins can reach the handler', async () => {
+  const originalRole = testProfileRole;
+  const callsBefore = rateLimitCalls.length;
+  try {
+    testProfileRole = 'student';
+    const studentResponse = await fetch(`${baseUrl}/api/exercises/extract-file`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
+      body: JSON.stringify({ file: { name: 'sample.pdf', base64: 'data' } }),
+    });
+    assert.equal(studentResponse.status, 403);
+    assert.deepEqual(await studentResponse.json(), {
+      error: 'Bạn không có quyền sử dụng chức năng này.',
+      code: 'FORBIDDEN',
+    });
+    assert.equal(rateLimitCalls.length, callsBefore);
+
+    for (const role of ['teacher', 'admin'] as const) {
+      testProfileRole = role;
+      const response = await fetch(`${baseUrl}/api/exercises/extract-file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-access-token',
+        },
+        body: JSON.stringify({ file: { name: 'sample.pdf' } }),
+      });
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), {
+        success: false,
+        error: 'Dữ liệu file không hợp lệ hoặc thiếu thông tin.',
+      });
+    }
+  } finally {
+    testProfileRole = originalRole;
+  }
+});
+
+test('rate limits are atomic under concurrency and isolated by user and endpoint', async () => {
+  const explainEndpoint: RateLimitEndpoint = '/api/ai/explain';
+  const videoEndpoint: RateLimitEndpoint = '/api/ai/video-script';
+  const extractionEndpoint: RateLimitEndpoint = '/api/exercises/extract-file';
+  rateLimitCounts.clear();
+  rateLimitLimits.set(explainEndpoint, 1);
+  rateLimitLimits.set(videoEndpoint, 2);
+  rateLimitLimits.set(extractionEndpoint, 1);
+  const callsBefore = rateLimitCalls.length;
+
+  const post = (endpoint: string, token = 'test-access-token') =>
+    fetch(`${baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        question: { stem: 'Question', explanation: 'Expected' },
+        conceptId: 'C01',
+        conceptName: 'Python',
+        topicName: 'Programming',
+        studentScore: 5,
+      }),
+    });
+
+  try {
+    const concurrentResponses = await Promise.all([
+      post(explainEndpoint),
+      post(explainEndpoint),
+    ]);
+    assert.deepEqual(
+      concurrentResponses.map((response) => response.status).sort(),
+      [200, 429]
+    );
+    const limitedResponse = concurrentResponses.find((response) => response.status === 429);
+    assert.ok(limitedResponse);
+    assert.equal(limitedResponse.headers.get('retry-after'), '37');
+    assert.deepEqual(await limitedResponse.json(), {
+      error: 'Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.',
+      code: 'RATE_LIMITED',
+      retryAfterSeconds: 37,
+    });
+
+    const otherUserResponse = await post(explainEndpoint, 'second-user-token');
+    assert.equal(otherUserResponse.status, 200);
+    assert.ok(rateLimitCalls.slice(callsBefore).some((call) =>
+      call.userId === 'second-verified-user' && call.endpoint === explainEndpoint
+    ));
+
+    const videoResponses = await Promise.all([
+      post(videoEndpoint),
+      post(videoEndpoint),
+      post(videoEndpoint),
+    ]);
+    assert.deepEqual(videoResponses.map((response) => response.status).sort(), [400, 400, 429]);
+    assert.equal(
+      rateLimitCalls.slice(callsBefore).filter((call) => call.endpoint === explainEndpoint).length,
+      3,
+    );
+
+    const extractionPayload = {
+      file: { name: 'sample.pdf' },
+    };
+    const extractionResponses = await Promise.all([
+      fetch(`${baseUrl}${extractionEndpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-access-token',
+        },
+        body: JSON.stringify(extractionPayload),
+      }),
+      fetch(`${baseUrl}${extractionEndpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-access-token',
+        },
+        body: JSON.stringify(extractionPayload),
+      }),
+    ]);
+    assert.deepEqual(extractionResponses.map((response) => response.status).sort(), [400, 429]);
+  } finally {
+    rateLimitLimits.delete(explainEndpoint);
+    rateLimitLimits.delete(videoEndpoint);
+    rateLimitLimits.delete(extractionEndpoint);
+    rateLimitCounts.clear();
+  }
+});
+
+test('rate limit store failures fail closed without calling Gemini handler', async () => {
+  const restoreFailingConsumer = configureRateLimitConsumer(async () => {
+    throw new Error('shared store unavailable');
+  });
+  try {
+    const response = await fetch(`${baseUrl}/api/ai/video-script`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: 'Không thể xác minh giới hạn yêu cầu. Vui lòng thử lại sau.',
+      code: 'RATE_LIMIT_STORE_UNAVAILABLE',
+    });
+  } finally {
+    restoreFailingConsumer();
+  }
+});
+
+test('profile lookup failures are distinct from authentication and authorization failures', async () => {
+  failProfileLookup = true;
+  try {
+    const response = await fetch(`${baseUrl}/api/exercises/extract-file`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
+      body: JSON.stringify({ file: { name: 'sample.pdf', base64: 'data' } }),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: 'Không thể tải hồ sơ quyền hạn. Vui lòng thử lại.',
+      code: 'PROFILE_LOOKUP_FAILED',
+    });
+  } finally {
+    failProfileLookup = false;
+  }
+});
+
+test('Supabase verifier outages are not misreported as invalid credentials', async () => {
+  failTokenVerification = true;
+  try {
+    const response = await fetch(`${baseUrl}/api/ai/explain`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: 'Authentication service is temporarily unavailable',
+      code: 'AUTH_UNAVAILABLE',
+    });
+  } finally {
+    failTokenVerification = false;
+  }
 });
 
 test('exercise extraction reports HTTP and API failures instead of returning empty success', async () => {

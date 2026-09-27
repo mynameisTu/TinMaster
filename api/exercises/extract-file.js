@@ -4,6 +4,211 @@ import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import mammoth from "mammoth";
 
+// src/server/supabaseAuth.ts
+import { createClient } from "@supabase/supabase-js";
+var SupabaseAuthConfigurationError = class extends Error {
+};
+var cachedClient = null;
+async function verifySupabaseAccessToken(token) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
+    throw new SupabaseAuthConfigurationError("Supabase Auth is not configured.");
+  }
+  if (!cachedClient) {
+    cachedClient = createClient(url, anonKey, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false
+      }
+    });
+  }
+  const { data, error } = await cachedClient.auth.getUser(token);
+  if (error) {
+    const status = error.status;
+    if (status === 401 || status === 403) return null;
+    throw error;
+  }
+  return data.user;
+}
+async function resolveSupabaseProfileRole(userId, token) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
+    throw new SupabaseAuthConfigurationError("Supabase Auth is not configured.");
+  }
+  const userClient = createClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false
+    }
+  });
+  const { data, error } = await userClient.from("profiles").select("role").eq("id", userId).maybeSingle();
+  if (error) throw error;
+  if (!data || !["student", "teacher", "admin"].includes(data.role)) return null;
+  return data.role;
+}
+var verifierKey = /* @__PURE__ */ Symbol.for("tinmaster.access-token-verifier");
+var profileRoleResolverKey = /* @__PURE__ */ Symbol.for("tinmaster.profile-role-resolver");
+function currentVerifier() {
+  return Reflect.get(globalThis, verifierKey) ?? verifySupabaseAccessToken;
+}
+function currentProfileRoleResolver() {
+  return Reflect.get(globalThis, profileRoleResolverKey) ?? resolveSupabaseProfileRole;
+}
+var requireSupabaseUser = async (req, res, next) => {
+  const authorization = req.header("authorization");
+  const match = authorization?.match(/^Bearer ([^\s]+)$/i);
+  if (!match) {
+    res.status(401).json({
+      error: "Authentication required",
+      code: "AUTH_REQUIRED"
+    });
+    return;
+  }
+  try {
+    const user = await currentVerifier()(match[1]);
+    if (!user) {
+      res.status(401).json({
+        error: "Invalid or expired authentication session",
+        code: "AUTH_INVALID"
+      });
+      return;
+    }
+    res.locals.authenticatedUserId = user.id;
+    next();
+  } catch (error) {
+    if (error instanceof SupabaseAuthConfigurationError) {
+      res.status(503).json({
+        error: "Authentication service is not configured",
+        code: "AUTH_CONFIGURATION"
+      });
+      return;
+    }
+    console.error("[auth] Supabase token verification failed.");
+    res.status(503).json({
+      error: "Authentication service is temporarily unavailable",
+      code: "AUTH_UNAVAILABLE"
+    });
+  }
+};
+function requireSupabaseRole(allowedRoles) {
+  return async (req, res, next) => {
+    const authorization = req.header("authorization");
+    const match = authorization?.match(/^Bearer ([^\s]+)$/i);
+    const userId = res.locals.authenticatedUserId;
+    if (!match || !userId) {
+      res.status(401).json({
+        error: "Authentication required",
+        code: "AUTH_REQUIRED"
+      });
+      return;
+    }
+    try {
+      const role = await currentProfileRoleResolver()(userId, match[1]);
+      if (!role) {
+        res.status(403).json({
+          error: "T\xE0i kho\u1EA3n ch\u01B0a c\xF3 h\u1ED3 s\u01A1 ho\u1EB7c vai tr\xF2 h\u1EE3p l\u1EC7.",
+          code: "PROFILE_UNAVAILABLE"
+        });
+        return;
+      }
+      if (!allowedRoles.includes(role)) {
+        res.status(403).json({
+          error: "B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EED d\u1EE5ng ch\u1EE9c n\u0103ng n\xE0y.",
+          code: "FORBIDDEN"
+        });
+        return;
+      }
+      res.locals.authenticatedUserRole = role;
+      next();
+    } catch (error) {
+      if (error instanceof SupabaseAuthConfigurationError) {
+        res.status(503).json({
+          error: "D\u1ECBch v\u1EE5 h\u1ED3 s\u01A1 ch\u01B0a \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh.",
+          code: "PROFILE_CONFIGURATION"
+        });
+        return;
+      }
+      console.error("[auth] Supabase profile role lookup failed.");
+      res.status(503).json({
+        error: "Kh\xF4ng th\u1EC3 t\u1EA3i h\u1ED3 s\u01A1 quy\u1EC1n h\u1EA1n. Vui l\xF2ng th\u1EED l\u1EA1i.",
+        code: "PROFILE_LOOKUP_FAILED"
+      });
+    }
+  };
+}
+
+// src/server/rateLimit.ts
+import { createClient as createClient2 } from "@supabase/supabase-js";
+var RateLimitStoreError = class extends Error {
+};
+async function consumeSupabaseRateLimit(_verifiedUserId, endpoint, token) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new RateLimitStoreError("Rate limit store is not configured.");
+  const userClient = createClient2(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false
+    }
+  });
+  const { data, error } = await userClient.rpc("consume_api_rate_limit", {
+    p_endpoint: endpoint
+  });
+  if (error) throw error;
+  const result = Array.isArray(data) ? data[0] : data;
+  if (typeof result?.allowed !== "boolean" || !Number.isFinite(Number(result.retry_after_seconds))) {
+    throw new RateLimitStoreError("Rate limit store returned an invalid decision.");
+  }
+  return {
+    allowed: result.allowed,
+    retryAfterSeconds: Math.max(1, Math.ceil(Number(result.retry_after_seconds)))
+  };
+}
+var consumerKey = /* @__PURE__ */ Symbol.for("tinmaster.rate-limit-consumer");
+function currentConsumer() {
+  return Reflect.get(globalThis, consumerKey) ?? consumeSupabaseRateLimit;
+}
+function rateLimitGemini(endpoint) {
+  return async (req, res, next) => {
+    const userId = res.locals.authenticatedUserId;
+    const authorization = req.header("authorization");
+    const match = authorization?.match(/^Bearer ([^\s]+)$/i);
+    if (!userId || !match) {
+      res.status(401).json({
+        error: "Authentication required",
+        code: "AUTH_REQUIRED"
+      });
+      return;
+    }
+    try {
+      const decision = await currentConsumer()(userId, endpoint, match[1]);
+      if (!decision.allowed) {
+        res.setHeader("Retry-After", String(decision.retryAfterSeconds));
+        res.status(429).json({
+          error: "B\u1EA1n \u0111\xE3 g\u1EEDi qu\xE1 nhi\u1EC1u y\xEAu c\u1EA7u. Vui l\xF2ng th\u1EED l\u1EA1i sau.",
+          code: "RATE_LIMITED",
+          retryAfterSeconds: decision.retryAfterSeconds
+        });
+        return;
+      }
+      next();
+    } catch {
+      console.error("[rate-limit] Shared rate limit store unavailable.");
+      res.status(503).json({
+        error: "Kh\xF4ng th\u1EC3 x\xE1c minh gi\u1EDBi h\u1EA1n y\xEAu c\u1EA7u. Vui l\xF2ng th\u1EED l\u1EA1i sau.",
+        code: "RATE_LIMIT_STORE_UNAVAILABLE"
+      });
+    }
+  };
+}
+
 // src/server/geminiResilience.ts
 var GeminiResilienceError = class extends Error {
   constructor(message, details) {
@@ -328,21 +533,27 @@ function registerApiRoutes() {
       geminiConfigured: !!process.env.GEMINI_API_KEY
     });
   });
-  app.post("/api/ai/explain", async (req, res) => {
-    try {
-      const { question, userAnswer, conceptName, studentScore } = req.body;
-      const ai = getGenAI();
-      if (!ai) {
-        return res.json({
-          explanation: question?.explanation || "Kh\xF4ng c\xF3 gi\u1EA3i th\xEDch chi ti\u1EBFt.",
-          misconceptionDiagnosis: `Kh\xE1i ni\u1EC7m "${conceptName}" c\u1EA7n l\u01B0u \xFD b\u1EABy \u0111\u1EC1 thi v\xE0 c\xE1c quy t\u1EAFc c\xFA ph\xE1p c\u01A1 b\u1EA3n.`,
-          studyTips: [
-            "Xem k\u1EF9 l\u1EA1i \u0111\u1ECBnh ngh\u0129a trong SGK K\u1EBFt n\u1ED1i tri th\u1EE9c",
-            "Th\u1EF1c h\xE0nh l\u1EA1i c\xE2u h\u1ECFi t\u01B0\u01A1ng t\u1EF1 trong 48 gi\u1EDD t\u1EDBi"
-          ]
-        });
-      }
-      const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia s\u01B0 ph\u1EA1m Tin h\u1ECDc luy\u1EC7n thi t\u1ED1t nghi\u1EC7p THPT t\u1EA1i Vi\u1EC7t Nam.
+  app.post(
+    "/api/ai/explain",
+    requireSupabaseUser,
+    rateLimitGemini("/api/ai/explain"),
+    async (req, res) => {
+      try {
+        const { question, userAnswer, conceptName, studentScore } = req.body;
+        const ai = getGenAI();
+        if (!ai) {
+          return res.json(
+            {
+              explanation: question?.explanation || "Kh\xF4ng c\xF3 gi\u1EA3i th\xEDch chi ti\u1EBFt.",
+              misconceptionDiagnosis: `Kh\xE1i ni\u1EC7m "${conceptName}" c\u1EA7n l\u01B0u \xFD b\u1EABy \u0111\u1EC1 thi v\xE0 c\xE1c quy t\u1EAFc c\xFA ph\xE1p c\u01A1 b\u1EA3n.`,
+              studyTips: [
+                "Xem k\u1EF9 l\u1EA1i \u0111\u1ECBnh ngh\u0129a trong SGK K\u1EBFt n\u1ED1i tri th\u1EE9c",
+                "Th\u1EF1c h\xE0nh l\u1EA1i c\xE2u h\u1ECFi t\u01B0\u01A1ng t\u1EF1 trong 48 gi\u1EDD t\u1EDBi"
+              ]
+            }
+          );
+        }
+        const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia s\u01B0 ph\u1EA1m Tin h\u1ECDc luy\u1EC7n thi t\u1ED1t nghi\u1EC7p THPT t\u1EA1i Vi\u1EC7t Nam.
 H\xE3y ph\xE2n t\xEDch c\xE2u h\u1ECFi sau cho h\u1ECDc sinh (\u0110i\u1EC3m n\u0103ng l\u1EF1c hi\u1EC7n t\u1EA1i: ${studentScore * 10}/10):
 Chuy\xEAn \u0111\u1EC1: ${conceptName}
 \u0110\u1EC1 b\xE0i: ${question.stem}
@@ -356,49 +567,54 @@ Y\xEAu c\u1EA7u tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng JSON thu\u1EA7n t\xFAy
   "misconceptionDiagnosis": "Ch\u1EA9n \u0111o\xE1n nguy\xEAn nh\xE2n h\u1ECDc sinh ch\u1ECDn sai (nh\u1EA7m l\u1EABn kh\xE1i ni\u1EC7m, sai c\xFA ph\xE1p, b\u1EABy bi\xEAn hay c\u1EA9u th\u1EA3)",
   "studyTips": ["M\u1EB9o 1", "M\u1EB9o 2", "M\u1EB9o 3"]
 }`;
-      let text = "";
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json"
-          }
+        let text = "";
+        try {
+          const response = await ai.models.generateContent({
+            model: "gemini-3.8-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
+          text = response.text?.trim() || "{}";
+        } catch (firstErr) {
+          console.warn("First model attempt failed for explain, retrying with gemini-3.5-flash:", firstErr?.message);
+          const retryResponse = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
+          text = retryResponse.text?.trim() || "{}";
+        }
+        const parsed = JSON.parse(text);
+        res.json(parsed);
+      } catch (err) {
+        console.warn("AI explain error fallback:", err?.message);
+        res.json({
+          explanation: req.body.question?.explanation || "Gi\u1EA3i th\xEDch chu\u1EA9n theo SGK GDPT 2018.",
+          misconceptionDiagnosis: "L\u01B0u \xFD c\xE1c t\u1EEB kh\xF3a mang t\xEDnh ph\u1EE7 \u0111\u1ECBnh ho\u1EB7c \u0111i\u1EC1u ki\u1EC7n r\xE0ng bu\u1ED9c trong \u0111\u1EC1 thi.",
+          studyTips: [
+            "\u0110\u1ECDc k\u1EF9 \u0111\u1EC1 v\xE0 v\u1EBD nh\xE1p s\u01A1 \u0111\u1ED3 lu\u1ED3ng d\u1EEF li\u1EC7u tr\u01B0\u1EDBc khi ch\u1ECDn ph\u01B0\u01A1ng \xE1n",
+            "\xD4n l\u1EA1i \u0111\u1ECBnh ngh\u0129a c\u1ED1t l\xF5i trong SGK Tin h\u1ECDc 11/12 K\u1EBFt n\u1ED1i tri th\u1EE9c"
+          ]
         });
-        text = response.text?.trim() || "{}";
-      } catch (firstErr) {
-        console.warn("First model attempt failed for explain, retrying with gemini-3.5-flash:", firstErr?.message);
-        const retryResponse = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json"
-          }
-        });
-        text = retryResponse.text?.trim() || "{}";
       }
-      const parsed = JSON.parse(text);
-      res.json(parsed);
-    } catch (err) {
-      console.warn("AI explain error fallback:", err?.message);
-      res.json({
-        explanation: req.body.question?.explanation || "Gi\u1EA3i th\xEDch chu\u1EA9n theo SGK GDPT 2018.",
-        misconceptionDiagnosis: "L\u01B0u \xFD c\xE1c t\u1EEB kh\xF3a mang t\xEDnh ph\u1EE7 \u0111\u1ECBnh ho\u1EB7c \u0111i\u1EC1u ki\u1EC7n r\xE0ng bu\u1ED9c trong \u0111\u1EC1 thi.",
-        studyTips: [
-          "\u0110\u1ECDc k\u1EF9 \u0111\u1EC1 v\xE0 v\u1EBD nh\xE1p s\u01A1 \u0111\u1ED3 lu\u1ED3ng d\u1EEF li\u1EC7u tr\u01B0\u1EDBc khi ch\u1ECDn ph\u01B0\u01A1ng \xE1n",
-          "\xD4n l\u1EA1i \u0111\u1ECBnh ngh\u0129a c\u1ED1t l\xF5i trong SGK Tin h\u1ECDc 11/12 K\u1EBFt n\u1ED1i tri th\u1EE9c"
-        ]
-      });
     }
-  });
-  app.post("/api/ai/video-script", async (req, res) => {
-    try {
-      const { conceptId, conceptName, topicName } = req.body;
-      const ai = getGenAI();
-      if (!ai) {
-        return res.status(400).json({ error: "Gemini API not configured" });
-      }
-      const prompt = `B\u1EA1n l\xE0 \u0111\u1EA1o di\u1EC5n b\xE0i gi\u1EA3ng video gi\xE1o d\u1EE5c s\u1ED1 ng\u1EAFn (Micro-learning 3 ph\xFAt) cho h\u1ECDc sinh THPT chu\u1EA9n b\u1ECB thi T\u1ED1t nghi\u1EC7p m\xF4n Tin h\u1ECDc.
+  );
+  app.post(
+    "/api/ai/video-script",
+    requireSupabaseUser,
+    rateLimitGemini("/api/ai/video-script"),
+    async (req, res) => {
+      try {
+        const { conceptId, conceptName, topicName } = req.body;
+        const ai = getGenAI();
+        if (!ai) {
+          return res.status(400).json({ error: "Gemini API not configured" });
+        }
+        const prompt = `B\u1EA1n l\xE0 \u0111\u1EA1o di\u1EC5n b\xE0i gi\u1EA3ng video gi\xE1o d\u1EE5c s\u1ED1 ng\u1EAFn (Micro-learning 3 ph\xFAt) cho h\u1ECDc sinh THPT chu\u1EA9n b\u1ECB thi T\u1ED1t nghi\u1EC7p m\xF4n Tin h\u1ECDc.
 H\xE3y bi\xEAn so\u1EA1n k\u1ECBch b\u1EA3n video cho kh\xE1i ni\u1EC7m: "${conceptName}" (Ch\u1EE7 \u0111\u1EC1: ${topicName}).
 Tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng JSON thu\u1EA7n t\xFAy:
 {
@@ -424,129 +640,139 @@ Tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng JSON thu\u1EA7n t\xFAy:
     "explanation": "Gi\u1EA3i th\xEDch ng\u1EAFn v\xEC sao \u0111\xFAng"
   }
 }`;
-      let responseText = "";
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json"
-          }
-        });
-        responseText = response.text?.trim() || "";
-      } catch (firstErr) {
-        console.warn("First model attempt failed, retrying with fallback model:", firstErr?.message);
-        const retryResponse = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json"
-          }
-        });
-        responseText = retryResponse.text?.trim() || "";
-      }
-      if (!responseText) {
-        throw new Error("Empty response from AI model");
-      }
-      res.json(JSON.parse(responseText));
-    } catch (err) {
-      console.warn("AI video-script fallback applied:", err?.message);
-      const { conceptId = "C01", conceptName = "Kh\xE1i ni\u1EC7m Tin h\u1ECDc", topicName = "Chuy\xEAn \u0111\u1EC1" } = req.body || {};
-      res.json({
-        conceptId,
-        conceptName,
-        targetDurationMinutes: 3,
-        learningObjective: `N\u1EAFm v\u1EEFng b\u1EA3n ch\u1EA5t c\u1ED1t l\xF5i c\u1EE7a ${conceptName}, x\u1EED l\xFD g\u1ECDn c\xE1c c\xE2u h\u1ECFi m\u1EE9c \u0111\u1ED9 V\u1EADn d\u1EE5ng trong \u0110\u1EC1 thi T\u1ED1t nghi\u1EC7p THPT Tin h\u1ECDc.`,
-        scenes: [
-          {
-            sceneNumber: 1,
-            durationSeconds: 25,
-            title: "Ph\xE2n c\u1EA3nh 1: \u0110\u1EB7t v\u1EA5n \u0111\u1EC1 & T\xECnh hu\u1ED1ng th\u1EF1c t\u1EBF",
-            visualDescription: `Hi\u1EC3n th\u1ECB slide ho\u1EA1t h\u1ECDa sinh \u0111\u1ED9ng: T\xECnh hu\u1ED1ng ph\xE1t sinh b\xE0i to\xE1n trong m\xF4i tr\u01B0\u1EDDng th\u1EF1c ti\u1EC5n li\xEAn quan \u0111\u1EBFn ${topicName}.`,
-            narrationVoiceover: `Ch\xE0o c\xE1c b\u1EA1n h\u1ECDc sinh 2k7! Trong c\u1EA5u tr\xFAc \u0111\u1EC1 thi t\u1ED1t nghi\u1EC7p THPT m\xF4n Tin h\u1ECDc, ph\u1EA7n ${conceptName} th\u01B0\u1EDDng l\xE0 \u0111i\u1EC3m ph\xE2n h\xF3a \u0111i\u1EC3m 8+. H\xF4m nay ch\xFAng ta s\u1EBD c\xF9ng gi\u1EA3i m\xE3 b\u1EA3n ch\u1EA5t trong \u0111\xFAng 3 ph\xFAt.`,
-            keyHighlight: `Tr\u1ECDng t\xE2m \u0111\u1EC1 thi: ${conceptName}`
-          },
-          {
-            sceneNumber: 2,
-            durationSeconds: 45,
-            title: "Ph\xE2n c\u1EA3nh 2: M\u1ED5 x\u1EBB B\u1EA3n ch\u1EA5t & C\u01A1 ch\u1EBF ho\u1EA1t \u0111\u1ED9ng",
-            visualDescription: `S\u01A1 \u0111\u1ED3 kh\u1ED1i tr\u1EF1c quan \u0111\u1ED9ng v\xE0 minh h\u1ECDa t\u1EEBng b\u01B0\u1EDBc x\u1EED l\xFD d\u1EEF li\u1EC7u c\u1EE7a ${conceptName}.`,
-            narrationVoiceover: `\u0110\u1EC3 kh\xF4ng b\u1ECB m\u1EA5t \u0111i\u1EC3m oan, h\xE3y nh\u1EDB: B\u1EA3n ch\u1EA5t c\u1EE7a ${conceptName} xoay quanh lu\u1ED3ng d\u1EEF li\u1EC7u v\xE0o, \u0111i\u1EC1u ki\u1EC7n d\u1EEBng v\xE0 c\xE1c gi\xE1 tr\u1ECB bi\xEAn.`,
-            keyHighlight: "Hi\u1EC3u b\u1EA3n ch\u1EA5t thay v\xEC h\u1ECDc v\u1EB9t c\xF4ng th\u1EE9c"
-          },
-          {
-            sceneNumber: 3,
-            durationSeconds: 50,
-            title: "Ph\xE2n c\u1EA3nh 3: B\u1EABy \u0111\u1EC1 thi THPT B\u1ED9 GD&\u0110T th\u01B0\u1EDDng g\u1EB7p",
-            visualDescription: "B\u1EA3ng \u0111\u1ED1i chi\u1EBFu 2 \u0111o\u1EA1n code/l\u1EC7nh: M\u1ED9t b\xEAn l\xE0 c\xE1ch t\u01B0 duy tr\u1EF1c gi\xE1c sai l\u1EA7m, m\u1ED9t b\xEAn l\xE0 chu\u1EA9n m\u1EF1c gi\u1EA3i thu\u1EADt.",
-            narrationVoiceover: `\u0110i\u1EC3m b\u1EABy ph\u1ED5 bi\u1EBFn nh\u1EA5t: \u0110\u1EC1 thi th\u01B0\u1EDDng thay \u0111\u1ED5i m\u1ED9t to\xE1n t\u1EED quan h\u1EC7 ho\u1EB7c bi\u1EBFn ch\u1EC9 s\u1ED1. 42% th\xED sinh trong \u0111\u1EE3t kh\u1EA3o s\xE1t \u0111\xE3 b\u1ECF qua \u0111i\u1EC1u ki\u1EC7n bi\xEAn n\xE0y!`,
-            keyHighlight: "B\u1EABy \u0111\u1EC1 thi: Ch\xFA \xFD \u0111i\u1EC1u ki\u1EC7n bi\xEAn v\xE0 ki\u1EC3u d\u1EEF li\u1EC7u"
-          },
-          {
-            sceneNumber: 4,
-            durationSeconds: 30,
-            title: "Ph\xE2n c\u1EA3nh 4: C\xF4ng th\u1EE9c gi\u1EA3i nhanh & T\xF3m t\u1EAFt",
-            visualDescription: "Mindmap t\u1ED5ng h\u1EE3p 3 nguy\xEAn t\u1EAFc v\xE0ng c\u1EA7n ki\u1EC3m tra tr\u01B0\u1EDBc khi t\xF4 \u0111\xE1p \xE1n.",
-            narrationVoiceover: `T\xF3m l\u1EA1i, g\u1EB7p d\u1EA1ng b\xE0i ${conceptName}: B\u01B0\u1EDBc 1 ki\u1EC3m tra \u0111i\u1EC1u ki\u1EC7n, B\u01B0\u1EDBc 2 t\xEDnh to\xE1n nh\xE1p t\u1EEBng b\u01B0\u1EDBc, B\u01B0\u1EDBc 3 lo\u1EA1i tr\u1EEB ph\u01B0\u01A1ng \xE1n sai.`,
-            keyHighlight: "3 B\u01B0\u1EDBc t\u01B0 duy chu\u1EA9n x\xE1c"
-          }
-        ],
-        miniQuiz: {
-          questionText: `Trong chuy\xEAn \u0111\u1EC1 ${conceptName}, y\u1EBFu t\u1ED1 quan tr\u1ECDng nh\u1EA5t c\u1EA7n ki\u1EC3m tra k\u1EF9 tr\u01B0\u1EDBc khi ch\u1ECDn ph\u01B0\u01A1ng \xE1n tr\u1EA3 l\u1EDDi l\xE0 g\xEC?`,
-          options: [
-            "\u0110i\u1EC1u ki\u1EC7n bi\xEAn v\xE0 ki\u1EC3u d\u1EEF li\u1EC7u \u0111\u1EA7u v\xE0o c\u1EE7a b\xE0i to\xE1n",
-            "\u0110\u1ED9 d\xE0i c\u1EE7a \u0111o\u1EA1n m\xE3 ch\u01B0\u01A1ng tr\xECnh",
-            "T\xEAn bi\u1EBFn \u0111\u1EB7t theo ti\u1EBFng Anh hay ti\u1EBFng Vi\u1EC7t",
-            "Th\u1EE9 t\u1EF1 c\xE1c c\xE2u h\u1ECFi tr\u01B0\u1EDBc \u0111\xF3 trong \u0111\u1EC1"
+        let responseText = "";
+        try {
+          const response = await ai.models.generateContent(
+            {
+              model: "gemini-3.8-flash",
+              contents: prompt,
+              config: {
+                responseMimeType: "application/json"
+              }
+            }
+          );
+          responseText = response.text?.trim() || "";
+        } catch (firstErr) {
+          console.warn("First model attempt failed, retrying with fallback model:", firstErr?.message);
+          const retryResponse = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
+          responseText = retryResponse.text?.trim() || "";
+        }
+        if (!responseText) {
+          throw new Error("Empty response from AI model");
+        }
+        res.json(JSON.parse(responseText));
+      } catch (err) {
+        console.warn("AI video-script fallback applied:", err?.message);
+        const { conceptId = "C01", conceptName = "Kh\xE1i ni\u1EC7m Tin h\u1ECDc", topicName = "Chuy\xEAn \u0111\u1EC1" } = req.body || {};
+        res.json({
+          conceptId,
+          conceptName,
+          targetDurationMinutes: 3,
+          learningObjective: `N\u1EAFm v\u1EEFng b\u1EA3n ch\u1EA5t c\u1ED1t l\xF5i c\u1EE7a ${conceptName}, x\u1EED l\xFD g\u1ECDn c\xE1c c\xE2u h\u1ECFi m\u1EE9c \u0111\u1ED9 V\u1EADn d\u1EE5ng trong \u0110\u1EC1 thi T\u1ED1t nghi\u1EC7p THPT Tin h\u1ECDc.`,
+          scenes: [
+            {
+              sceneNumber: 1,
+              durationSeconds: 25,
+              title: "Ph\xE2n c\u1EA3nh 1: \u0110\u1EB7t v\u1EA5n \u0111\u1EC1 & T\xECnh hu\u1ED1ng th\u1EF1c t\u1EBF",
+              visualDescription: `Hi\u1EC3n th\u1ECB slide ho\u1EA1t h\u1ECDa sinh \u0111\u1ED9ng: T\xECnh hu\u1ED1ng ph\xE1t sinh b\xE0i to\xE1n trong m\xF4i tr\u01B0\u1EDDng th\u1EF1c ti\u1EC5n li\xEAn quan \u0111\u1EBFn ${topicName}.`,
+              narrationVoiceover: `Ch\xE0o c\xE1c b\u1EA1n h\u1ECDc sinh 2k7! Trong c\u1EA5u tr\xFAc \u0111\u1EC1 thi t\u1ED1t nghi\u1EC7p THPT m\xF4n Tin h\u1ECDc, ph\u1EA7n ${conceptName} th\u01B0\u1EDDng l\xE0 \u0111i\u1EC3m ph\xE2n h\xF3a \u0111i\u1EC3m 8+. H\xF4m nay ch\xFAng ta s\u1EBD c\xF9ng gi\u1EA3i m\xE3 b\u1EA3n ch\u1EA5t trong \u0111\xFAng 3 ph\xFAt.`,
+              keyHighlight: `Tr\u1ECDng t\xE2m \u0111\u1EC1 thi: ${conceptName}`
+            },
+            {
+              sceneNumber: 2,
+              durationSeconds: 45,
+              title: "Ph\xE2n c\u1EA3nh 2: M\u1ED5 x\u1EBB B\u1EA3n ch\u1EA5t & C\u01A1 ch\u1EBF ho\u1EA1t \u0111\u1ED9ng",
+              visualDescription: `S\u01A1 \u0111\u1ED3 kh\u1ED1i tr\u1EF1c quan \u0111\u1ED9ng v\xE0 minh h\u1ECDa t\u1EEBng b\u01B0\u1EDBc x\u1EED l\xFD d\u1EEF li\u1EC7u c\u1EE7a ${conceptName}.`,
+              narrationVoiceover: `\u0110\u1EC3 kh\xF4ng b\u1ECB m\u1EA5t \u0111i\u1EC3m oan, h\xE3y nh\u1EDB: B\u1EA3n ch\u1EA5t c\u1EE7a ${conceptName} xoay quanh lu\u1ED3ng d\u1EEF li\u1EC7u v\xE0o, \u0111i\u1EC1u ki\u1EC7n d\u1EEBng v\xE0 c\xE1c gi\xE1 tr\u1ECB bi\xEAn.`,
+              keyHighlight: "Hi\u1EC3u b\u1EA3n ch\u1EA5t thay v\xEC h\u1ECDc v\u1EB9t c\xF4ng th\u1EE9c"
+            },
+            {
+              sceneNumber: 3,
+              durationSeconds: 50,
+              title: "Ph\xE2n c\u1EA3nh 3: B\u1EABy \u0111\u1EC1 thi THPT B\u1ED9 GD&\u0110T th\u01B0\u1EDDng g\u1EB7p",
+              visualDescription: "B\u1EA3ng \u0111\u1ED1i chi\u1EBFu 2 \u0111o\u1EA1n code/l\u1EC7nh: M\u1ED9t b\xEAn l\xE0 c\xE1ch t\u01B0 duy tr\u1EF1c gi\xE1c sai l\u1EA7m, m\u1ED9t b\xEAn l\xE0 chu\u1EA9n m\u1EF1c gi\u1EA3i thu\u1EADt.",
+              narrationVoiceover: `\u0110i\u1EC3m b\u1EABy ph\u1ED5 bi\u1EBFn nh\u1EA5t: \u0110\u1EC1 thi th\u01B0\u1EDDng thay \u0111\u1ED5i m\u1ED9t to\xE1n t\u1EED quan h\u1EC7 ho\u1EB7c bi\u1EBFn ch\u1EC9 s\u1ED1. 42% th\xED sinh trong \u0111\u1EE3t kh\u1EA3o s\xE1t \u0111\xE3 b\u1ECF qua \u0111i\u1EC1u ki\u1EC7n bi\xEAn n\xE0y!`,
+              keyHighlight: "B\u1EABy \u0111\u1EC1 thi: Ch\xFA \xFD \u0111i\u1EC1u ki\u1EC7n bi\xEAn v\xE0 ki\u1EC3u d\u1EEF li\u1EC7u"
+            },
+            {
+              sceneNumber: 4,
+              durationSeconds: 30,
+              title: "Ph\xE2n c\u1EA3nh 4: C\xF4ng th\u1EE9c gi\u1EA3i nhanh & T\xF3m t\u1EAFt",
+              visualDescription: "Mindmap t\u1ED5ng h\u1EE3p 3 nguy\xEAn t\u1EAFc v\xE0ng c\u1EA7n ki\u1EC3m tra tr\u01B0\u1EDBc khi t\xF4 \u0111\xE1p \xE1n.",
+              narrationVoiceover: `T\xF3m l\u1EA1i, g\u1EB7p d\u1EA1ng b\xE0i ${conceptName}: B\u01B0\u1EDBc 1 ki\u1EC3m tra \u0111i\u1EC1u ki\u1EC7n, B\u01B0\u1EDBc 2 t\xEDnh to\xE1n nh\xE1p t\u1EEBng b\u01B0\u1EDBc, B\u01B0\u1EDBc 3 lo\u1EA1i tr\u1EEB ph\u01B0\u01A1ng \xE1n sai.`,
+              keyHighlight: "3 B\u01B0\u1EDBc t\u01B0 duy chu\u1EA9n x\xE1c"
+            }
           ],
-          correctIndex: 0,
-          explanation: "\u0110i\u1EC1u ki\u1EC7n bi\xEAn v\xE0 s\u1EF1 t\u01B0\u01A1ng th\xEDch ki\u1EC3u d\u1EEF li\u1EC7u l\xE0 nguy\xEAn nh\xE2n d\u1EABn \u0111\u1EBFn h\u01A1n 60% l\u1ED7i sai trong c\xE1c c\xE2u h\u1ECFi v\u1EADn d\u1EE5ng Tin h\u1ECDc."
-        }
-      });
-    }
-  });
-  app.post("/api/exercises/extract-file", async (req, res) => {
-    const { file, answerKeyFile } = req.body;
-    if (!file || !file.name || !file.base64) {
-      return res.status(400).json({
-        success: false,
-        error: "D\u1EEF li\u1EC7u file kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c thi\u1EBFu th\xF4ng tin."
-      });
-    }
-    const fileName = file.name;
-    const fileExt = fileName.substring(fileName.lastIndexOf(".")).toLowerCase();
-    const cleanBase64 = file.base64.includes("base64,") ? file.base64.split("base64,")[1] : file.base64;
-    const processingStartedAt = Date.now();
-    const extractionDeadlineMs = readPositiveEnvNumber(
-      "GEMINI_EXTRACTION_DEADLINE_MS",
-      18e4,
-      24e4
-    );
-    const requestAbortController = new AbortController();
-    const onRequestAborted = () => requestAbortController.abort();
-    const onResponseClosed = () => {
-      if (!res.writableEnded) requestAbortController.abort();
-    };
-    req.once("aborted", onRequestAborted);
-    res.once("close", onResponseClosed);
-    try {
-      let docxExtractedText = "";
-      let answerKeyExtractedText = "";
-      if (fileExt === ".docx") {
-        const fileBuffer = Buffer.from(cleanBase64, "base64");
-        const result = await mammoth.extractRawText({ buffer: fileBuffer });
-        docxExtractedText = result.value || "";
+          miniQuiz: {
+            questionText: `Trong chuy\xEAn \u0111\u1EC1 ${conceptName}, y\u1EBFu t\u1ED1 quan tr\u1ECDng nh\u1EA5t c\u1EA7n ki\u1EC3m tra k\u1EF9 tr\u01B0\u1EDBc khi ch\u1ECDn ph\u01B0\u01A1ng \xE1n tr\u1EA3 l\u1EDDi l\xE0 g\xEC?`,
+            options: [
+              "\u0110i\u1EC1u ki\u1EC7n bi\xEAn v\xE0 ki\u1EC3u d\u1EEF li\u1EC7u \u0111\u1EA7u v\xE0o c\u1EE7a b\xE0i to\xE1n",
+              "\u0110\u1ED9 d\xE0i c\u1EE7a \u0111o\u1EA1n m\xE3 ch\u01B0\u01A1ng tr\xECnh",
+              "T\xEAn bi\u1EBFn \u0111\u1EB7t theo ti\u1EBFng Anh hay ti\u1EBFng Vi\u1EC7t",
+              "Th\u1EE9 t\u1EF1 c\xE1c c\xE2u h\u1ECFi tr\u01B0\u1EDBc \u0111\xF3 trong \u0111\u1EC1"
+            ],
+            correctIndex: 0,
+            explanation: "\u0110i\u1EC1u ki\u1EC7n bi\xEAn v\xE0 s\u1EF1 t\u01B0\u01A1ng th\xEDch ki\u1EC3u d\u1EEF li\u1EC7u l\xE0 nguy\xEAn nh\xE2n d\u1EABn \u0111\u1EBFn h\u01A1n 60% l\u1ED7i sai trong c\xE1c c\xE2u h\u1ECFi v\u1EADn d\u1EE5ng Tin h\u1ECDc."
+          }
+        });
       }
-      if (answerKeyFile && answerKeyFile.base64) {
-        const keyExt = (answerKeyFile.name || "").substring((answerKeyFile.name || "").lastIndexOf(".")).toLowerCase();
-        const cleanKeyBase64 = answerKeyFile.base64.includes("base64,") ? answerKeyFile.base64.split("base64,")[1] : answerKeyFile.base64;
-        if (keyExt === ".docx") {
-          const keyBuffer = Buffer.from(cleanKeyBase64, "base64");
-          const keyResult = await mammoth.extractRawText({ buffer: keyBuffer });
-          answerKeyExtractedText = keyResult.value || "";
-        }
+    }
+  );
+  app.post(
+    "/api/exercises/extract-file",
+    requireSupabaseUser,
+    requireSupabaseRole(["teacher", "admin"]),
+    rateLimitGemini("/api/exercises/extract-file"),
+    async (req, res) => {
+      const { file, answerKeyFile } = req.body;
+      if (!file || !file.name || !file.base64) {
+        return res.status(400).json(
+          {
+            success: false,
+            error: "D\u1EEF li\u1EC7u file kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c thi\u1EBFu th\xF4ng tin."
+          }
+        );
       }
-      const curriculumPrompt = `B\u1EA1n l\xE0 chuy\xEAn gia s\u1ED1 h\xF3a \u0111\u1EC1 thi m\xF4n Tin h\u1ECDc THPT ch\u01B0\u01A1ng tr\xECnh GDPT 2018 c\u1EE7a B\u1ED9 Gi\xE1o d\u1EE5c & \u0110\xE0o t\u1EA1o Vi\u1EC7t Nam.
+      const fileName = file.name;
+      const fileExt = fileName.substring(fileName.lastIndexOf(".")).toLowerCase();
+      const cleanBase64 = file.base64.includes("base64,") ? file.base64.split("base64,")[1] : file.base64;
+      const processingStartedAt = Date.now();
+      const extractionDeadlineMs = readPositiveEnvNumber(
+        "GEMINI_EXTRACTION_DEADLINE_MS",
+        18e4,
+        24e4
+      );
+      const requestAbortController = new AbortController();
+      const onRequestAborted = () => requestAbortController.abort();
+      const onResponseClosed = () => {
+        if (!res.writableEnded) requestAbortController.abort();
+      };
+      req.once("aborted", onRequestAborted);
+      res.once("close", onResponseClosed);
+      try {
+        let docxExtractedText = "";
+        let answerKeyExtractedText = "";
+        if (fileExt === ".docx") {
+          const fileBuffer = Buffer.from(cleanBase64, "base64");
+          const result = await mammoth.extractRawText({ buffer: fileBuffer });
+          docxExtractedText = result.value || "";
+        }
+        if (answerKeyFile && answerKeyFile.base64) {
+          const keyExt = (answerKeyFile.name || "").substring((answerKeyFile.name || "").lastIndexOf(".")).toLowerCase();
+          const cleanKeyBase64 = answerKeyFile.base64.includes("base64,") ? answerKeyFile.base64.split("base64,")[1] : answerKeyFile.base64;
+          if (keyExt === ".docx") {
+            const keyBuffer = Buffer.from(cleanKeyBase64, "base64");
+            const keyResult = await mammoth.extractRawText({ buffer: keyBuffer });
+            answerKeyExtractedText = keyResult.value || "";
+          }
+        }
+        const curriculumPrompt = `B\u1EA1n l\xE0 chuy\xEAn gia s\u1ED1 h\xF3a \u0111\u1EC1 thi m\xF4n Tin h\u1ECDc THPT ch\u01B0\u01A1ng tr\xECnh GDPT 2018 c\u1EE7a B\u1ED9 Gi\xE1o d\u1EE5c & \u0110\xE0o t\u1EA1o Vi\u1EC7t Nam.
 H\xE3y \u0111\u1ECDc k\u1EF9 n\u1ED9i dung \u0111\u1EC1 thi, nh\u1EADn di\u1EC7n ch\xEDnh x\xE1c ti\u1EBFng Vi\u1EC7t c\xF3 d\u1EA5u, c\xF4ng th\u1EE9c to\xE1n h\u1ECDc, \u0111o\u1EA1n code (Python, SQL, HTML, CSS), v\xE0 c\xE1c ph\u01B0\u01A1ng \xE1n A, B, C, D.
 
 Quy \u0111\u1ECBnh c\u1EA5u tr\xFAc h\xF3a:
@@ -599,253 +825,254 @@ Y\xEAu c\u1EA7u tr\u1EA3 v\u1EC1 m\u1EA3ng JSON thu\u1EA7n t\xFAy (kh\xF4ng b\u1
     "reviewReason": ""
   }
 ]`;
-      let extractedQuestions = [];
-      if (process.env.GEMINI_API_KEY) {
-        let contentsPayload;
-        if (fileExt === ".docx") {
-          contentsPayload = `${curriculumPrompt}
+        let extractedQuestions = [];
+        if (process.env.GEMINI_API_KEY) {
+          let contentsPayload;
+          if (fileExt === ".docx") {
+            contentsPayload = `${curriculumPrompt}
 
 N\u1ED8I DUNG V\u0102N B\u1EA2N TR\xCDCH XU\u1EA4T T\u1EEA FILE \u0110\u1EC0 THI (${fileName}):
 """
 ${docxExtractedText}
 """`;
-        } else if (fileExt === ".pdf") {
-          const parts = [
-            {
-              inlineData: {
-                mimeType: "application/pdf",
-                data: cleanBase64
-              }
-            },
-            {
-              text: `${curriculumPrompt}
+          } else if (fileExt === ".pdf") {
+            const parts = [
+              {
+                inlineData: {
+                  mimeType: "application/pdf",
+                  data: cleanBase64
+                }
+              },
+              {
+                text: `${curriculumPrompt}
 
 H\xE3y \u0111\u1ECDc to\xE0n b\u1ED9 t\xE0i li\u1EC7u PDF tr\xEAn (${fileName}) v\xE0 tr\xEDch xu\u1EA5t danh s\xE1ch c\xE2u h\u1ECFi.`
-            }
-          ];
-          if (answerKeyFile && answerKeyFile.base64 && !answerKeyExtractedText) {
-            const keyClean = answerKeyFile.base64.includes("base64,") ? answerKeyFile.base64.split("base64,")[1] : answerKeyFile.base64;
-            const keyMime = answerKeyFile.mimeType || (answerKeyFile.name?.endsWith(".pdf") ? "application/pdf" : "image/png");
-            parts.push({
-              inlineData: {
-                mimeType: keyMime,
-                data: keyClean
               }
-            });
-            parts.push({
-              text: "T\xE0i li\u1EC7u b\u1ED5 sung \u0111\xEDnh k\xE8m \u1EDF tr\xEAn l\xE0 B\u1EA2NG \u0110\xC1P \xC1N. H\xE3y \u0111\u1ED1i chi\u1EBFu s\u1ED1 th\u1EE9 t\u1EF1 c\xE2u h\u1ECFi \u0111\u1EC3 \u0111i\u1EC1n \u0111\xE1p \xE1n \u0111\xFAng."
-            });
-          }
-          contentsPayload = { parts };
-        } else {
-          const mimeType = file.mimeType || (fileExt === ".png" ? "image/png" : "image/jpeg");
-          const parts = [
-            {
-              inlineData: {
-                mimeType,
-                data: cleanBase64
-              }
-            },
-            {
-              text: `${curriculumPrompt}
-
-\u0110\xE2y l\xE0 h\xECnh \u1EA3nh ch\u1EE5p \u0111\u1EC1 thi (${fileName}). H\xE3y ch\u1EA1y OCR nh\u1EADn di\u1EC7n ch\xEDnh x\xE1c t\u1EEBng c\xE2u h\u1ECFi, c\xF4ng th\u1EE9c, m\xE3 code v\xE0 ph\u01B0\u01A1ng \xE1n.`
-            }
-          ];
-          if (answerKeyFile && answerKeyFile.base64 && !answerKeyExtractedText) {
-            const keyClean = answerKeyFile.base64.includes("base64,") ? answerKeyFile.base64.split("base64,")[1] : answerKeyFile.base64;
-            const keyMime = answerKeyFile.mimeType || (answerKeyFile.name?.endsWith(".pdf") ? "application/pdf" : "image/png");
-            parts.push({
-              inlineData: {
-                mimeType: keyMime,
-                data: keyClean
-              }
-            });
-            parts.push({
-              text: "T\xE0i li\u1EC7u b\u1ED5 sung \u0111\xEDnh k\xE8m \u1EDF tr\xEAn l\xE0 B\u1EA2NG \u0110\xC1P \xC1N. H\xE3y \u0111\u1ED1i chi\u1EBFu s\u1ED1 th\u1EE9 t\u1EF1 c\xE2u h\u1ECFi \u0111\u1EC3 \u0111i\u1EC1n \u0111\xE1p \xE1n \u0111\xFAng."
-            });
-          }
-          contentsPayload = { parts };
-        }
-        let modelUsed = process.env.GEMINI_PRIMARY_MODEL?.trim() || "gemini-3.8-flash";
-        let retryCount = 0;
-        let processingDurationMs = 0;
-        try {
-          const generated = await generateWithGeminiResilience(
-            async (model, attempt) => {
-              const requestMetadata = {};
-              const gemini = new GoogleGenAI({
-                apiKey: process.env.GEMINI_API_KEY,
-                httpOptions: {
-                  timeout: attempt.timeoutMs,
-                  retryOptions: { attempts: 1 },
-                  headers: { "User-Agent": "aistudio-build" },
-                  fetch: async (input, init) => {
-                    const controller = new AbortController();
-                    const abortSignals = [attempt.signal, init?.signal].filter(
-                      (signal) => signal != null
-                    );
-                    const abortHandlers = abortSignals.map((signal) => {
-                      const abort = () => controller.abort(signal.reason);
-                      if (signal.aborted) abort();
-                      else signal.addEventListener("abort", abort, { once: true });
-                      return { signal, abort };
-                    });
-                    try {
-                      const response = await globalThis.fetch(input, {
-                        ...init,
-                        signal: controller.signal
-                      });
-                      requestMetadata.retryAfterMs = getRetryAfterMs(
-                        response.headers.get("Retry-After")
-                      );
-                      return response;
-                    } finally {
-                      abortHandlers.forEach(
-                        ({ signal, abort }) => signal.removeEventListener("abort", abort)
-                      );
-                    }
-                  }
+            ];
+            if (answerKeyFile && answerKeyFile.base64 && !answerKeyExtractedText) {
+              const keyClean = answerKeyFile.base64.includes("base64,") ? answerKeyFile.base64.split("base64,")[1] : answerKeyFile.base64;
+              const keyMime = answerKeyFile.mimeType || (answerKeyFile.name?.endsWith(".pdf") ? "application/pdf" : "image/png");
+              parts.push({
+                inlineData: {
+                  mimeType: keyMime,
+                  data: keyClean
                 }
               });
-              try {
-                return await gemini.models.generateContent({
-                  model,
-                  contents: contentsPayload,
-                  config: {
-                    responseMimeType: "application/json"
+              parts.push({
+                text: "T\xE0i li\u1EC7u b\u1ED5 sung \u0111\xEDnh k\xE8m \u1EDF tr\xEAn l\xE0 B\u1EA2NG \u0110\xC1P \xC1N. H\xE3y \u0111\u1ED1i chi\u1EBFu s\u1ED1 th\u1EE9 t\u1EF1 c\xE2u h\u1ECFi \u0111\u1EC3 \u0111i\u1EC1n \u0111\xE1p \xE1n \u0111\xFAng."
+              });
+            }
+            contentsPayload = { parts };
+          } else {
+            const mimeType = file.mimeType || (fileExt === ".png" ? "image/png" : "image/jpeg");
+            const parts = [
+              {
+                inlineData: {
+                  mimeType,
+                  data: cleanBase64
+                }
+              },
+              {
+                text: `${curriculumPrompt}
+
+\u0110\xE2y l\xE0 h\xECnh \u1EA3nh ch\u1EE5p \u0111\u1EC1 thi (${fileName}). H\xE3y ch\u1EA1y OCR nh\u1EADn di\u1EC7n ch\xEDnh x\xE1c t\u1EEBng c\xE2u h\u1ECFi, c\xF4ng th\u1EE9c, m\xE3 code v\xE0 ph\u01B0\u01A1ng \xE1n.`
+              }
+            ];
+            if (answerKeyFile && answerKeyFile.base64 && !answerKeyExtractedText) {
+              const keyClean = answerKeyFile.base64.includes("base64,") ? answerKeyFile.base64.split("base64,")[1] : answerKeyFile.base64;
+              const keyMime = answerKeyFile.mimeType || (answerKeyFile.name?.endsWith(".pdf") ? "application/pdf" : "image/png");
+              parts.push({
+                inlineData: {
+                  mimeType: keyMime,
+                  data: keyClean
+                }
+              });
+              parts.push({
+                text: "T\xE0i li\u1EC7u b\u1ED5 sung \u0111\xEDnh k\xE8m \u1EDF tr\xEAn l\xE0 B\u1EA2NG \u0110\xC1P \xC1N. H\xE3y \u0111\u1ED1i chi\u1EBFu s\u1ED1 th\u1EE9 t\u1EF1 c\xE2u h\u1ECFi \u0111\u1EC3 \u0111i\u1EC1n \u0111\xE1p \xE1n \u0111\xFAng."
+              });
+            }
+            contentsPayload = { parts };
+          }
+          let modelUsed = process.env.GEMINI_PRIMARY_MODEL?.trim() || "gemini-3.8-flash";
+          let retryCount = 0;
+          let processingDurationMs = 0;
+          try {
+            const generated = await generateWithGeminiResilience(
+              async (model, attempt) => {
+                const requestMetadata = {};
+                const gemini = new GoogleGenAI({
+                  apiKey: process.env.GEMINI_API_KEY,
+                  httpOptions: {
+                    timeout: attempt.timeoutMs,
+                    retryOptions: { attempts: 1 },
+                    headers: { "User-Agent": "aistudio-build" },
+                    fetch: async (input, init) => {
+                      const controller = new AbortController();
+                      const abortSignals = [attempt.signal, init?.signal].filter(
+                        (signal) => signal != null
+                      );
+                      const abortHandlers = abortSignals.map((signal) => {
+                        const abort = () => controller.abort(signal.reason);
+                        if (signal.aborted) abort();
+                        else signal.addEventListener("abort", abort, { once: true });
+                        return { signal, abort };
+                      });
+                      try {
+                        const response = await globalThis.fetch(input, {
+                          ...init,
+                          signal: controller.signal
+                        });
+                        requestMetadata.retryAfterMs = getRetryAfterMs(
+                          response.headers.get("Retry-After")
+                        );
+                        return response;
+                      } finally {
+                        abortHandlers.forEach(
+                          ({ signal, abort }) => signal.removeEventListener("abort", abort)
+                        );
+                      }
+                    }
                   }
                 });
-              } catch (error) {
-                throw new GeminiApiCallError(error, requestMetadata.retryAfterMs);
+                try {
+                  return await gemini.models.generateContent({
+                    model,
+                    contents: contentsPayload,
+                    config: {
+                      responseMimeType: "application/json"
+                    }
+                  });
+                } catch (error) {
+                  throw new GeminiApiCallError(error, requestMetadata.retryAfterMs);
+                }
+              },
+              {
+                primaryModel: process.env.GEMINI_PRIMARY_MODEL?.trim() || "gemini-3.8-flash",
+                fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || void 0,
+                maxRetries: 2,
+                perAttemptTimeoutMs: readPositiveEnvNumber(
+                  "GEMINI_ATTEMPT_TIMEOUT_MS",
+                  3e4,
+                  6e4
+                ),
+                overallDeadlineMs: extractionDeadlineMs - (Date.now() - processingStartedAt),
+                responseReserveMs: 15e3,
+                signal: requestAbortController.signal
               }
-            },
-            {
-              primaryModel: process.env.GEMINI_PRIMARY_MODEL?.trim() || "gemini-3.8-flash",
-              fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || void 0,
-              maxRetries: 2,
-              perAttemptTimeoutMs: readPositiveEnvNumber(
-                "GEMINI_ATTEMPT_TIMEOUT_MS",
-                3e4,
-                6e4
-              ),
-              overallDeadlineMs: extractionDeadlineMs - (Date.now() - processingStartedAt),
-              responseReserveMs: 15e3,
-              signal: requestAbortController.signal
+            );
+            modelUsed = generated.model;
+            retryCount = generated.retryCount;
+            const jsonText = generated.value.text?.trim() || "";
+            extractedQuestions = parseAndValidateExtractedQuestions(jsonText);
+            processingDurationMs = Date.now() - processingStartedAt;
+            logExtractionAttempt({
+              model: modelUsed,
+              category: "none",
+              retryCount,
+              durationMs: processingDurationMs
+            });
+          } catch (error) {
+            const category = error instanceof GeminiResilienceError ? error.category : error instanceof GeminiResponseError ? error.category : classifyGeminiError(error);
+            const details = error instanceof GeminiResilienceError ? {
+              model: error.model,
+              retryCount: error.retryCount,
+              durationMs: Math.max(
+                error.durationMs,
+                Date.now() - processingStartedAt
+              )
+            } : {
+              model: modelUsed,
+              retryCount,
+              durationMs: Math.max(
+                processingDurationMs,
+                Date.now() - processingStartedAt
+              )
+            };
+            logExtractionAttempt({ ...details, category });
+            if (!(error instanceof GeminiResponseError)) {
+              throw error;
             }
-          );
-          modelUsed = generated.model;
-          retryCount = generated.retryCount;
-          const jsonText = generated.value.text?.trim() || "";
-          extractedQuestions = parseAndValidateExtractedQuestions(jsonText);
-          processingDurationMs = Date.now() - processingStartedAt;
-          logExtractionAttempt({
-            model: modelUsed,
-            category: "none",
-            retryCount,
-            durationMs: processingDurationMs
-          });
-        } catch (error) {
-          const category = error instanceof GeminiResilienceError ? error.category : error instanceof GeminiResponseError ? error.category : classifyGeminiError(error);
-          const details = error instanceof GeminiResilienceError ? {
-            model: error.model,
-            retryCount: error.retryCount,
-            durationMs: Math.max(
-              error.durationMs,
-              Date.now() - processingStartedAt
-            )
-          } : {
-            model: modelUsed,
-            retryCount,
-            durationMs: Math.max(
-              processingDurationMs,
-              Date.now() - processingStartedAt
-            )
-          };
-          logExtractionAttempt({ ...details, category });
-          if (!(error instanceof GeminiResponseError)) {
-            throw error;
           }
         }
-      }
-      if (extractedQuestions.length > 0) {
-        const batchRandom = Math.random().toString(36).substring(2, 7);
-        const formattedQuestions = extractedQuestions.map((q, idx) => {
-          const id = `Q_IMP_${Date.now()}_${batchRandom}_${idx + 1}`;
-          const isSingle = q.questionType === "single_choice" || !q.trueFalseStatements;
-          return {
-            id,
-            questionType: isSingle ? "single_choice" : "true_false_multistatement",
-            stem: q.stem || `C\xE2u h\u1ECFi tr\xEDch xu\u1EA5t #${idx + 1}`,
-            codeSnippet: q.codeSnippet && q.codeSnippet.code ? q.codeSnippet : void 0,
-            singleChoiceOptions: isSingle ? q.singleChoiceOptions && q.singleChoiceOptions.length === 4 ? q.singleChoiceOptions : [
-              { label: "A", text: q.singleChoiceOptions?.[0]?.text || "L\u1EF1a ch\u1ECDn A", isCorrect: !!q.singleChoiceOptions?.[0]?.isCorrect },
-              { label: "B", text: q.singleChoiceOptions?.[1]?.text || "L\u1EF1a ch\u1ECDn B", isCorrect: !!q.singleChoiceOptions?.[1]?.isCorrect },
-              { label: "C", text: q.singleChoiceOptions?.[2]?.text || "L\u1EF1a ch\u1ECDn C", isCorrect: !!q.singleChoiceOptions?.[2]?.isCorrect },
-              { label: "D", text: q.singleChoiceOptions?.[3]?.text || "L\u1EF1a ch\u1ECDn D", isCorrect: !!q.singleChoiceOptions?.[3]?.isCorrect }
-            ] : void 0,
-            trueFalseStatements: !isSingle ? q.trueFalseStatements && q.trueFalseStatements.length === 4 ? q.trueFalseStatements : [
-              { subOrder: "a", statementText: q.trueFalseStatements?.[0]?.statementText || "Ph\xE1t bi\u1EC3u a", isCorrect: !!q.trueFalseStatements?.[0]?.isCorrect, explanation: "" },
-              { subOrder: "b", statementText: q.trueFalseStatements?.[1]?.statementText || "Ph\xE1t bi\u1EC3u b", isCorrect: !!q.trueFalseStatements?.[1]?.isCorrect, explanation: "" },
-              { subOrder: "c", statementText: q.trueFalseStatements?.[2]?.statementText || "Ph\xE1t bi\u1EC3u c", isCorrect: !!q.trueFalseStatements?.[2]?.isCorrect, explanation: "" },
-              { subOrder: "d", statementText: q.trueFalseStatements?.[3]?.statementText || "Ph\xE1t bi\u1EC3u d", isCorrect: !!q.trueFalseStatements?.[3]?.isCorrect, explanation: "" }
-            ] : void 0,
-            conceptId: q.conceptId || "CS12_AI_CONCEPTS",
-            topicId: q.topicId || "AI_FUNDAMENTALS",
-            grade: q.grade || 12,
-            strand: q.strand || "CS",
-            cognitiveLevel: q.cognitiveLevel || "comprehension",
-            difficulty: q.difficulty || "medium",
-            estimatedTimeSec: 45,
-            competencyCode: q.competencyCode || "NLa",
-            explanation: q.explanation || "L\u1EDDi gi\u1EA3i chi ti\u1EBFt chu\u1EA9n ch\u01B0\u01A1ng tr\xECnh Tin h\u1ECDc GDPT 2018.",
-            keyTakeaway: q.keyTakeaway || "Ki\u1EBFn th\u1EE9c c\u1ED1t l\xF5i \xF4n thi THPT.",
-            source: `T\u1EA3i l\xEAn t\u1EEB file: ${fileName}`,
-            sourceYear: 2025,
-            isVerified: true,
-            // Meta attributes for review screen
-            confidence: q.confidence || (q.needsReview ? "low" : "high"),
-            needsReview: typeof q.needsReview === "boolean" ? q.needsReview : q.confidence === "low",
-            reviewReason: q.reviewReason || (q.needsReview ? "C\u1EA7n ki\u1EC3m tra l\u1EA1i \u0111\xE1p \xE1n" : ""),
-            sourceFile: fileName
-          };
-        });
-        return res.json({
-          success: true,
-          fileName,
-          questions: formattedQuestions,
-          count: formattedQuestions.length
-        });
-      }
-      if (docxExtractedText) {
-        const fallbackQuestions = parseQuestionsFromDocxText(docxExtractedText, fileName);
-        if (fallbackQuestions.length > 0) {
+        if (extractedQuestions.length > 0) {
+          const batchRandom = Math.random().toString(36).substring(2, 7);
+          const formattedQuestions = extractedQuestions.map((q, idx) => {
+            const id = `Q_IMP_${Date.now()}_${batchRandom}_${idx + 1}`;
+            const isSingle = q.questionType === "single_choice" || !q.trueFalseStatements;
+            return {
+              id,
+              questionType: isSingle ? "single_choice" : "true_false_multistatement",
+              stem: q.stem || `C\xE2u h\u1ECFi tr\xEDch xu\u1EA5t #${idx + 1}`,
+              codeSnippet: q.codeSnippet && q.codeSnippet.code ? q.codeSnippet : void 0,
+              singleChoiceOptions: isSingle ? q.singleChoiceOptions && q.singleChoiceOptions.length === 4 ? q.singleChoiceOptions : [
+                { label: "A", text: q.singleChoiceOptions?.[0]?.text || "L\u1EF1a ch\u1ECDn A", isCorrect: !!q.singleChoiceOptions?.[0]?.isCorrect },
+                { label: "B", text: q.singleChoiceOptions?.[1]?.text || "L\u1EF1a ch\u1ECDn B", isCorrect: !!q.singleChoiceOptions?.[1]?.isCorrect },
+                { label: "C", text: q.singleChoiceOptions?.[2]?.text || "L\u1EF1a ch\u1ECDn C", isCorrect: !!q.singleChoiceOptions?.[2]?.isCorrect },
+                { label: "D", text: q.singleChoiceOptions?.[3]?.text || "L\u1EF1a ch\u1ECDn D", isCorrect: !!q.singleChoiceOptions?.[3]?.isCorrect }
+              ] : void 0,
+              trueFalseStatements: !isSingle ? q.trueFalseStatements && q.trueFalseStatements.length === 4 ? q.trueFalseStatements : [
+                { subOrder: "a", statementText: q.trueFalseStatements?.[0]?.statementText || "Ph\xE1t bi\u1EC3u a", isCorrect: !!q.trueFalseStatements?.[0]?.isCorrect, explanation: "" },
+                { subOrder: "b", statementText: q.trueFalseStatements?.[1]?.statementText || "Ph\xE1t bi\u1EC3u b", isCorrect: !!q.trueFalseStatements?.[1]?.isCorrect, explanation: "" },
+                { subOrder: "c", statementText: q.trueFalseStatements?.[2]?.statementText || "Ph\xE1t bi\u1EC3u c", isCorrect: !!q.trueFalseStatements?.[2]?.isCorrect, explanation: "" },
+                { subOrder: "d", statementText: q.trueFalseStatements?.[3]?.statementText || "Ph\xE1t bi\u1EC3u d", isCorrect: !!q.trueFalseStatements?.[3]?.isCorrect, explanation: "" }
+              ] : void 0,
+              conceptId: q.conceptId || "CS12_AI_CONCEPTS",
+              topicId: q.topicId || "AI_FUNDAMENTALS",
+              grade: q.grade || 12,
+              strand: q.strand || "CS",
+              cognitiveLevel: q.cognitiveLevel || "comprehension",
+              difficulty: q.difficulty || "medium",
+              estimatedTimeSec: 45,
+              competencyCode: q.competencyCode || "NLa",
+              explanation: q.explanation || "L\u1EDDi gi\u1EA3i chi ti\u1EBFt chu\u1EA9n ch\u01B0\u01A1ng tr\xECnh Tin h\u1ECDc GDPT 2018.",
+              keyTakeaway: q.keyTakeaway || "Ki\u1EBFn th\u1EE9c c\u1ED1t l\xF5i \xF4n thi THPT.",
+              source: `T\u1EA3i l\xEAn t\u1EEB file: ${fileName}`,
+              sourceYear: 2025,
+              isVerified: true,
+              // Meta attributes for review screen
+              confidence: q.confidence || (q.needsReview ? "low" : "high"),
+              needsReview: typeof q.needsReview === "boolean" ? q.needsReview : q.confidence === "low",
+              reviewReason: q.reviewReason || (q.needsReview ? "C\u1EA7n ki\u1EC3m tra l\u1EA1i \u0111\xE1p \xE1n" : ""),
+              sourceFile: fileName
+            };
+          });
           return res.json({
             success: true,
             fileName,
-            questions: fallbackQuestions,
-            count: fallbackQuestions.length,
-            note: "Tr\xEDch xu\u1EA5t b\u1EB1ng b\u1ED9 ph\xE2n t\xEDch v\u0103n b\u1EA3n DOCX tr\u1EF1c ti\u1EBFp."
+            questions: formattedQuestions,
+            count: formattedQuestions.length
           });
         }
+        if (docxExtractedText) {
+          const fallbackQuestions = parseQuestionsFromDocxText(docxExtractedText, fileName);
+          if (fallbackQuestions.length > 0) {
+            return res.json({
+              success: true,
+              fileName,
+              questions: fallbackQuestions,
+              count: fallbackQuestions.length,
+              note: "Tr\xEDch xu\u1EA5t b\u1EB1ng b\u1ED9 ph\xE2n t\xEDch v\u0103n b\u1EA3n DOCX tr\u1EF1c ti\u1EBFp."
+            });
+          }
+        }
+        return res.json({
+          success: false,
+          fileName,
+          error: "Kh\xF4ng th\u1EC3 \u0111\u1ECDc n\u1ED9i dung c\xE2u h\u1ECFi t\u1EEB file n\xE0y, vui l\xF2ng ki\u1EC3m tra l\u1EA1i \u0111\u1ECBnh d\u1EA1ng ho\u1EB7c nh\u1EADp th\u1EE7 c\xF4ng."
+        });
+      } catch (err) {
+        if (requestAbortController.signal.aborted || res.destroyed) return;
+        return res.json({
+          success: false,
+          fileName,
+          error: getExtractionErrorMessage(err)
+        });
+      } finally {
+        req.removeListener("aborted", onRequestAborted);
+        res.removeListener("close", onResponseClosed);
       }
-      return res.json({
-        success: false,
-        fileName,
-        error: "Kh\xF4ng th\u1EC3 \u0111\u1ECDc n\u1ED9i dung c\xE2u h\u1ECFi t\u1EEB file n\xE0y, vui l\xF2ng ki\u1EC3m tra l\u1EA1i \u0111\u1ECBnh d\u1EA1ng ho\u1EB7c nh\u1EADp th\u1EE7 c\xF4ng."
-      });
-    } catch (err) {
-      if (requestAbortController.signal.aborted || res.destroyed) return;
-      return res.json({
-        success: false,
-        fileName,
-        error: getExtractionErrorMessage(err)
-      });
-    } finally {
-      req.removeListener("aborted", onRequestAborted);
-      res.removeListener("close", onResponseClosed);
     }
-  });
+  );
   function parseQuestionsFromDocxText(text, fileName) {
     const questions = [];
     const blocks = text.split(/(?:^|\n)(?:Câu\s+\d+[:.]|\b\d+[\.:]\s+)/i).filter((b) => b.trim().length > 10);

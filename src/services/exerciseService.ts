@@ -1,4 +1,5 @@
 import { Question } from '../types';
+import { authenticatedFetch } from './apiClient';
 
 export interface ExerciseFilePayload {
   name: string;
@@ -29,7 +30,7 @@ export async function extractQuestionsFromFile(
 ): Promise<ExerciseExtractionResponse> {
   let response: Response;
   try {
-    response = await fetch('/api/exercises/extract-file', {
+    response = await authenticatedFetch('/api/exercises/extract-file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file, answerKeyFile }),

@@ -66,6 +66,19 @@ export interface ClassStudentExamResult {
   status: 'completed' | 'in_progress' | 'not_started';
 }
 
+export function loadStoredExamHistory(
+  storage: Pick<Storage, 'getItem'>
+): ExamAttemptRecord[] {
+  try {
+    const saved = storage.getItem('tinmaster_student_exam_history_v1');
+    if (!saved) return [];
+    const parsed: unknown = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 // Blueprints for auxiliary exams
 export const BLUEPRINT_SQL_15M: ExamBlueprint = {
   id: 'BLUEPRINT_SQL_15M',
@@ -199,8 +212,8 @@ export const INITIAL_EXAMS_CATALOG: ExamCatalogItem[] = [
     targetGrade: 12,
     isFeatured: true,
     blueprint: OFFICIAL_EXAM_BLUEPRINT_2025,
-    attemptsCount: 1420,
-    averageScore: 7.45,
+    attemptsCount: 0,
+    averageScore: 0,
   },
   {
     id: 'exam-sql-15m',
@@ -220,8 +233,8 @@ export const INITIAL_EXAMS_CATALOG: ExamCatalogItem[] = [
     closeDate: '2026-10-15',
     targetGrade: 11,
     blueprint: BLUEPRINT_SQL_15M,
-    attemptsCount: 856,
-    averageScore: 7.9,
+    attemptsCount: 0,
+    averageScore: 0,
   },
   {
     id: 'exam-ai-45m',
@@ -241,8 +254,8 @@ export const INITIAL_EXAMS_CATALOG: ExamCatalogItem[] = [
     closeDate: '2026-10-30',
     targetGrade: 12,
     blueprint: BLUEPRINT_AI_45M,
-    attemptsCount: 624,
-    averageScore: 7.6,
+    attemptsCount: 0,
+    averageScore: 0,
   },
   {
     id: 'exam-web-45m',
@@ -262,8 +275,8 @@ export const INITIAL_EXAMS_CATALOG: ExamCatalogItem[] = [
     closeDate: '2026-11-01',
     targetGrade: 12,
     blueprint: BLUEPRINT_WEB_45M,
-    attemptsCount: 712,
-    averageScore: 8.1,
+    attemptsCount: 0,
+    averageScore: 0,
   },
   {
     id: 'exam-python-semester',
@@ -283,8 +296,8 @@ export const INITIAL_EXAMS_CATALOG: ExamCatalogItem[] = [
     closeDate: '2026-11-15',
     targetGrade: 11,
     blueprint: BLUEPRINT_SEMESTER_PYTHON,
-    attemptsCount: 940,
-    averageScore: 7.25,
+    attemptsCount: 0,
+    averageScore: 0,
   },
   {
     id: 'exam-network-survey',
@@ -304,174 +317,7 @@ export const INITIAL_EXAMS_CATALOG: ExamCatalogItem[] = [
     closeDate: '2026-12-31',
     targetGrade: 'all',
     blueprint: BLUEPRINT_NETWORK_SURVEY,
-    attemptsCount: 1105,
-    averageScore: 8.4,
-  },
-];
-
-// Initial mock exam history for student
-export const INITIAL_STUDENT_EXAM_HISTORY: ExamAttemptRecord[] = [
-  {
-    id: 'attempt-1',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa Môn Tin Học (THPT 2025)',
-    category: 'national_standard',
-    dateTaken: '2026-09-18T14:35:00.000Z',
-    score: 8.25,
-    maxScore: 10.0,
-    totalQuestions: 28,
-    correctCount: 22,
-    durationSeconds: 2355, // ~39 phút 15 giây
-    accuracy: 84.6,
-    trendDiff: 0.75,
-  },
-  {
-    id: 'attempt-2',
-    examId: 'exam-sql-15m',
-    examTitle: 'Kiểm tra 15 phút - Chủ đề SQL & Hệ QTCSDL',
-    category: 'test_15m',
-    dateTaken: '2026-09-15T09:20:00.000Z',
-    score: 9.0,
-    maxScore: 10.0,
-    totalQuestions: 10,
-    correctCount: 9,
-    durationSeconds: 700, // ~11 phút 40 giây
-    accuracy: 90.0,
-    trendDiff: 1.0,
-  },
-  {
-    id: 'attempt-3',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa Môn Tin Học (THPT 2025)',
-    category: 'national_standard',
-    dateTaken: '2026-09-10T16:10:00.000Z',
-    score: 7.5,
-    maxScore: 10.0,
-    totalQuestions: 28,
-    correctCount: 20,
-    durationSeconds: 2645, // ~44 phút 05 giây
-    accuracy: 76.9,
-  },
-  {
-    id: 'attempt-4',
-    examId: 'exam-ai-45m',
-    examTitle: 'Kiểm tra 1 tiết (45 phút) - Trí tuệ nhân tạo (AI)',
-    category: 'test_45m',
-    dateTaken: '2026-09-06T10:45:00.000Z',
-    score: 8.5,
-    maxScore: 10.0,
-    totalQuestions: 20,
-    correctCount: 17,
-    durationSeconds: 2240, // ~37 phút 20 giây
-    accuracy: 85.0,
-    trendDiff: 0.5,
-  },
-];
-
-// Initial mock class student exam results for Teacher/Admin view
-export const INITIAL_CLASS_EXAM_RESULTS: ClassStudentExamResult[] = [
-  {
-    studentId: 'hs-01',
-    studentName: 'Nguyễn Văn An',
-    className: '12A1',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 8.75,
-    correctCount: 23,
-    totalQuestions: 28,
-    durationSeconds: 2410,
-    submittedAt: '2026-09-19 15:40',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-02',
-    studentName: 'Trần Thị Bích',
-    className: '12A1',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 9.25,
-    correctCount: 24,
-    totalQuestions: 28,
-    durationSeconds: 2280,
-    submittedAt: '2026-09-19 15:35',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-03',
-    studentName: 'Lê Hoàng Cường',
-    className: '12A1',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 6.75,
-    correctCount: 18,
-    totalQuestions: 28,
-    durationSeconds: 2890,
-    submittedAt: '2026-09-19 15:48',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-04',
-    studentName: 'Phạm Minh Đức',
-    className: '12A1',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 9.5,
-    correctCount: 25,
-    totalQuestions: 28,
-    durationSeconds: 2150,
-    submittedAt: '2026-09-19 15:30',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-05',
-    studentName: 'Hoàng Thị Giang',
-    className: '12A1',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 7.5,
-    correctCount: 20,
-    totalQuestions: 28,
-    durationSeconds: 2710,
-    submittedAt: '2026-09-19 15:45',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-06',
-    studentName: 'Đặng Quốc Huy',
-    className: '12A2',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 8.0,
-    correctCount: 21,
-    totalQuestions: 28,
-    durationSeconds: 2540,
-    submittedAt: '2026-09-19 15:42',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-07',
-    studentName: 'Vũ Ngọc Khánh',
-    className: '12A2',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 5.5,
-    correctCount: 14,
-    totalQuestions: 28,
-    durationSeconds: 2950,
-    submittedAt: '2026-09-19 15:50',
-    status: 'completed',
-  },
-  {
-    studentId: 'hs-08',
-    studentName: 'Bùi Lan Phương',
-    className: '12A2',
-    examId: 'exam-thpt-2025-std',
-    examTitle: 'Phòng Thi Chuẩn Hóa THPT 2025',
-    score: 8.25,
-    correctCount: 22,
-    totalQuestions: 28,
-    durationSeconds: 2480,
-    submittedAt: '2026-09-19 15:38',
-    status: 'completed',
+    attemptsCount: 0,
+    averageScore: 0,
   },
 ];

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   UserProfile,
-  UserRole,
   StudentMastery,
   ExamSession,
   Question,
@@ -22,8 +21,7 @@ import {
   ExamAttemptRecord,
   ClassStudentExamResult,
   INITIAL_EXAMS_CATALOG,
-  INITIAL_STUDENT_EXAM_HISTORY,
-  INITIAL_CLASS_EXAM_RESULTS,
+  loadStoredExamHistory,
 } from './data/examCatalogData';
 
 import { Header } from './components/Header';
@@ -32,7 +30,6 @@ import { ExamSimulation } from './components/ExamSimulation';
 import { ExamReview } from './components/ExamReview';
 import { KnowledgeMap } from './components/KnowledgeMap';
 import { TeacherDashboard } from './components/TeacherDashboard';
-import { AdminResearchDashboard } from './components/AdminResearchDashboard';
 import { AIVideoLessonModal } from './components/AIVideoLessonModal';
 import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
 import { AdaptivePracticeSession } from './components/AdaptivePracticeSession';
@@ -40,6 +37,9 @@ import { PracticeBankView } from './components/PracticeBankView';
 import { GoogleSignInModal } from './components/GoogleSignInModal';
 import { ExamsCatalogView } from './components/ExamsCatalogView';
 import { SelectTrackModal } from './components/SelectTrackModal';
+import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { TeacherInvitationModal } from './components/TeacherInvitationModal';
+import { AuthenticationRoute } from './components/AuthPages';
 
 import {
   Play,
@@ -52,29 +52,40 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 
-const STORAGE_KEY_USER = 'tinmaster_user_profile_v1';
 const STORAGE_KEY_MASTERIES = 'tinmaster_masteries_v1';
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
+  );
+}
+
+function AppRoutes() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (['/admin', '/admin/dashboard', '/admin/setup-password', '/register', '/forgot-password', '/reset-password'].includes(path)) {
+    return <AuthenticationRoute />;
+  }
+  return <TinMasterApp />;
+}
+
+function TinMasterApp() {
+  const auth = useAuth();
+
   // 1. User State
-  const [user, setUser] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_USER);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return {
-      id: 'usr_student_01',
-      name: 'Ngoc Tu',
-      email: 'ngoctu@gmail.com',
-      role: 'student',
-      targetScore: 8.5,
-      estimatedScore: 7.4,
-      completedQuestionsCount: 38,
-      streakDays: 6,
-      xp: 450,
-      researchGroup: 'adaptive',
-      totalStudyMinutes: 120,
-    };
+  const [userState, setUser] = useState<UserProfile>({
+    id: '',
+    name: '',
+    email: '',
+    role: 'student',
+    targetScore: 8.5,
+    estimatedScore: 0,
+    completedQuestionsCount: 0,
+    streakDays: 0,
+    xp: 0,
+    researchGroup: 'unassigned',
+    totalStudyMinutes: 0,
   });
 
   // 2. Knowledge Mastery State (Bayesian Knowledge Tracing)
@@ -147,7 +158,7 @@ export default function App() {
   const [showVideoModal, setShowVideoModal] = useState<boolean>(false);
   const [videoConceptId, setVideoConceptId] = useState<string | undefined>(undefined);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState<boolean>(false);
-  const [showGoogleSignInModal, setShowGoogleSignInModal] = useState<boolean>(false);
+  const [showTeacherInvitationModal, setShowTeacherInvitationModal] = useState(false);
   const [showSelectTrackModal, setShowSelectTrackModal] = useState<boolean>(false);
   const [pendingExamStart, setPendingExamStart] = useState<{ blueprint: ExamBlueprint; examItem?: ExamCatalogItem } | null>(null);
   const [practiceQuestions, setPracticeQuestions] = useState<Question[] | null>(null);
@@ -161,14 +172,12 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  const handleGoogleSignIn = (email: string, name: string) => {
-    setUser((prev) => ({
-      ...prev,
-      email,
-      name,
-    }));
-    showToast(`Đã đồng bộ tài khoản Gmail: ${email}`);
-  };
+  useEffect(() => {
+    if (auth.status !== 'authenticated' || !auth.error) return;
+    setToastMessage(`Lỗi xác thực: ${auth.error}`);
+    const timeout = window.setTimeout(() => setToastMessage(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [auth.error, auth.status]);
 
   // Exam Catalog, History, and Session States
   const [examsCatalog, setExamsCatalog] = useState<ExamCatalogItem[]>(() => {
@@ -184,27 +193,33 @@ export default function App() {
     return INITIAL_EXAMS_CATALOG;
   });
 
-  const [examHistory, setExamHistory] = useState<ExamAttemptRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('tinmaster_student_exam_history_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return INITIAL_STUDENT_EXAM_HISTORY;
-  });
+  const [examHistory, setExamHistory] = useState<ExamAttemptRecord[]>(() =>
+    loadStoredExamHistory(localStorage)
+  );
 
-  const [classResults, setClassResults] = useState<ClassStudentExamResult[]>(INITIAL_CLASS_EXAM_RESULTS);
+  const [classResults] = useState<ClassStudentExamResult[]>([]);
   const [activeExamBlueprint, setActiveExamBlueprint] = useState<ExamBlueprint>(OFFICIAL_EXAM_BLUEPRINT_2025);
   const [currentExamItem, setCurrentExamItem] = useState<ExamCatalogItem | undefined>(undefined);
 
-  // Persist state changes
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    } catch {}
-  }, [user]);
+    if (!auth.profile) return;
+    setActiveTab('dashboard');
+  }, [auth.profile]);
+
+  const user: UserProfile = auth.profile
+    ? {
+      ...userState,
+      id: auth.profile.id,
+      name: auth.profile.displayName,
+      email: auth.profile.email,
+      role: auth.profile.role,
+      avatarUrl: auth.profile.avatarUrl,
+      school: auth.profile.school,
+      grade: auth.profile.grade,
+      examTrack: auth.profile.examTrack ?? userState.examTrack,
+      targetScore: auth.profile.targetScore,
+    }
+    : userState;
 
   useEffect(() => {
     try {
@@ -222,14 +237,6 @@ export default function App() {
   const learningPath: LearningPathDay[] = AdaptiveLearningEngine.generate7DayLearningPath(
     masteries
   );
-
-  // Role switch handler
-  const handleRoleChange = (role: UserRole) => {
-    setUser((prev) => ({ ...prev, role }));
-    if (role === 'teacher') setActiveTab('teacher_view');
-    else if (role === 'admin') setActiveTab('research_admin');
-    else setActiveTab('dashboard');
-  };
 
   // Assemble exam questions filtered by track for elective exams
   const assembleExamQuestions = (blueprint: ExamBlueprint, examItem?: ExamCatalogItem, track?: ExamTrack): Question[] => {
@@ -559,16 +566,38 @@ export default function App() {
     setShowVideoModal(true);
   };
 
+  if (auth.status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f8f9fa] text-sm text-slate-600">
+        Đang khôi phục phiên đăng nhập…
+      </div>
+    );
+  }
+
+  if (auth.status !== 'authenticated' || !auth.profile) {
+    return (
+      <GoogleSignInModal
+        isOpen
+        onSignIn={auth.signInWithGoogle}
+        isLoading={false}
+        error={auth.error}
+        errorKind={auth.errorKind}
+        onRetryProfileLoad={auth.retryProfileLoad}
+        onSignOut={auth.signOut}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f8f9fa] text-[#1e293b] flex flex-col font-sans">
       {/* 1. APP HEADER */}
       <Header
         user={user}
-        onRoleChange={handleRoleChange}
+        onSignOut={() => void auth.signOut()}
+        onRedeemTeacherInvitation={() => setShowTeacherInvitationModal(true)}
         activeTab={activeTab}
         onTabChange={(tab) => setActiveTab(tab)}
         onOpenVideoModal={() => handleOpenVideoModal()}
-        onOpenGoogleSignIn={() => setShowGoogleSignInModal(true)}
         onOpenGoogleWorkspace={() => setShowWorkspaceModal(true)}
         onOpenTrackModal={() => setShowSelectTrackModal(true)}
         onSelectTrack={handleTrackSelected}
@@ -668,15 +697,13 @@ export default function App() {
         )}
 
         {/* VIEW F: TEACHER DASHBOARD */}
-        {activeTab === 'teacher_view' && (
+        {activeTab === 'teacher_view' && (user.role === 'teacher' || user.role === 'admin') && (
           <TeacherDashboard
             onOpenVideoModal={() => handleOpenVideoModal()}
             onOpenGoogleWorkspace={() => setShowWorkspaceModal(true)}
           />
         )}
 
-        {/* VIEW G: ADMIN & SCIENTIFIC RESEARCH DASHBOARD */}
-        {activeTab === 'research_admin' && <AdminResearchDashboard />}
       </main>
 
       {/* 4. GOOGLE WORKSPACE FLOATING ACTION BAR */}
@@ -738,13 +765,12 @@ export default function App() {
         />
       )}
 
-      {/* Gmail Sign In Modal */}
-      <GoogleSignInModal
-        isOpen={showGoogleSignInModal}
-        onClose={() => setShowGoogleSignInModal(false)}
-        onSignIn={handleGoogleSignIn}
-        currentEmail={user.email}
-      />
+      {showTeacherInvitationModal && (
+        <TeacherInvitationModal
+          onClose={() => setShowTeacherInvitationModal(false)}
+          onRedeemed={auth.refreshProfile}
+        />
+      )}
 
       {/* Select Track Modal for Elective Exams */}
       <SelectTrackModal

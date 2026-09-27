@@ -2,6 +2,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
+import { requireSupabaseRole, requireSupabaseUser } from './supabaseAuth';
+import { rateLimitGemini } from './rateLimit';
 import {
   classifyGeminiError,
   generateWithGeminiResilience,
@@ -114,7 +116,11 @@ function registerApiRoutes() {
   });
 
   // API 2: AI Pedagogical Explanation
-  app.post('/api/ai/explain', async (req, res) => {
+  app.post(
+    '/api/ai/explain',
+    requireSupabaseUser,
+    rateLimitGemini('/api/ai/explain'),
+    async (req, res) => {
     try {
       const { question, userAnswer, conceptName, studentScore } = req.body;
       const ai = getGenAI();
@@ -127,7 +133,8 @@ function registerApiRoutes() {
             'Xem kỹ lại định nghĩa trong SGK Kết nối tri thức',
             'Thực hành lại câu hỏi tương tự trong 48 giờ tới',
           ],
-        });
+          }
+        );
       }
 
       const prompt = `Bạn là chuyên gia sư phạm Tin học luyện thi tốt nghiệp THPT tại Việt Nam.
@@ -182,7 +189,11 @@ Yêu cầu trả về định dạng JSON thuần túy (không dùng markdown co
   });
 
   // API 3: AI Video Lesson Script Generator
-  app.post('/api/ai/video-script', async (req, res) => {
+  app.post(
+    '/api/ai/video-script',
+    requireSupabaseUser,
+    rateLimitGemini('/api/ai/video-script'),
+    async (req, res) => {
     try {
       const { conceptId, conceptName, topicName } = req.body;
       const ai = getGenAI();
@@ -226,7 +237,8 @@ Trả về định dạng JSON thuần túy:
           config: {
             responseMimeType: 'application/json',
           },
-        });
+          }
+        );
         responseText = response.text?.trim() || '';
       } catch (firstErr: any) {
         // If 503 UNAVAILABLE (high demand), retry with alternative fast model gemini-3.5-flash
@@ -305,14 +317,20 @@ Trả về định dạng JSON thuần túy:
   });
 
   // API 4: Extract Questions from File (.docx, .pdf, .jpg, .jpeg, .png)
-  app.post('/api/exercises/extract-file', async (req, res) => {
+  app.post(
+    '/api/exercises/extract-file',
+    requireSupabaseUser,
+    requireSupabaseRole(['teacher', 'admin']),
+    rateLimitGemini('/api/exercises/extract-file'),
+    async (req, res) => {
     const { file, answerKeyFile } = req.body;
 
     if (!file || !file.name || !file.base64) {
       return res.status(400).json({
         success: false,
         error: 'Dữ liệu file không hợp lệ hoặc thiếu thông tin.',
-      });
+        }
+      );
     }
 
     const fileName = file.name;
