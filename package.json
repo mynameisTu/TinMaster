@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "test:member": "tsx --test tests/member.test.ts",
     "test:leaderboard": "tsx --test tests/leaderboard.test.ts",
     "test:api": "tsx --test tests/api.test.ts tests/auth.test.ts"
   },

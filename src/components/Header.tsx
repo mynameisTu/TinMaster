@@ -24,13 +24,18 @@ import {
   Globe,
   Compass,
 } from 'lucide-react';
+import { MemberAvatar } from './MemberAvatar';
 
 interface HeaderProps {
   user: UserProfile;
+  memberUsername?: string;
+  memberAvatarUrl?: string | null;
   onSignOut: () => void;
   onRedeemTeacherInvitation: () => void;
   activeTab: string;
   onTabChange: (tab: string) => void;
+  onOpenOwnProfile: () => void;
+  onOpenAccountSettings: () => void;
   onOpenVideoModal?: () => void;
   onOpenGoogleWorkspace?: () => void;
   onOpenTrackModal?: () => void;
@@ -39,17 +44,21 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   user,
+  memberUsername,
+  memberAvatarUrl,
   onSignOut,
   onRedeemTeacherInvitation,
   activeTab,
   onTabChange,
+  onOpenOwnProfile,
+  onOpenAccountSettings,
   onOpenVideoModal,
   onOpenGoogleWorkspace,
   onOpenTrackModal,
   onSelectTrack,
 }) => {
   // Clean username format
-  const userHandle = user.name ? user.name : (user.email ? user.email.split('@')[0] : 'Ngoc Tu');
+  const userHandle = user.name ? user.name : (user.email ? user.email.split('@')[0] : 'Thành viên');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [expandedUsers, setExpandedUsers] = useState(false);
@@ -92,9 +101,9 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-white border-b-[1.5px] border-[#1e293b] shadow-xs">
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
         <div className="w-full max-w-[95%] 2xl:max-w-[1850px] mx-auto px-3 sm:px-5 lg:px-7">
-          <div className="flex items-center justify-between h-12">
+          <div className="flex items-center justify-between h-14">
             {/* Left section: Hamburger button (Mobile) + Brand Logo */}
             <div className="flex items-center space-x-2 sm:space-x-3">
               {/* VNOI-style Cyan 3-bar Hamburger Button */}
@@ -105,9 +114,9 @@ export const Header: React.FC<HeaderProps> = ({
                 aria-label="Mở menu điều hướng"
                 title="Menu điều hướng"
               >
-                <span className="block w-4 h-0.5 bg-[#00e599] rounded-full mb-1"></span>
-                <span className="block w-4 h-0.5 bg-[#00e599] rounded-full mb-1"></span>
-                <span className="block w-4 h-0.5 bg-[#00e599] rounded-full"></span>
+                <span className="block w-4 h-0.5 bg-blue-500 rounded-full mb-1"></span>
+                <span className="block w-4 h-0.5 bg-blue-500 rounded-full mb-1"></span>
+                <span className="block w-4 h-0.5 bg-blue-500 rounded-full"></span>
               </button>
 
               {/* Brand Logo - Variation 2 Style */}
@@ -171,6 +180,16 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 Lộ trình
+              </button>
+              <button
+                onClick={() => onTabChange('member_directory')}
+                className={`text-xs font-semibold transition cursor-pointer flex items-center h-full border-b-2 pt-0.5 ${
+                  activeTab === 'member_directory' || activeTab === 'public_profile'
+                    ? 'opacity-100 border-[#2563eb] text-[#1e293b] font-bold'
+                    : 'opacity-70 hover:opacity-100 text-[#1e293b] border-transparent'
+                }`}
+              >
+                Thành viên
               </button>
               {(user.role === 'teacher' || user.role === 'admin') && <button
                 onClick={() => onTabChange('teacher_view')}
@@ -254,15 +273,14 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="relative" ref={dropdownRef}>
                 <button
                   onClick={() => setDropdownOpen((prev) => !prev)}
-                  className="flex items-center space-x-1.5 bg-[#f8fafc] hover:bg-[#f1f5f9] px-2 py-1 rounded border border-[#e2e8f0] transition cursor-pointer text-left focus:outline-hidden"
-                  title="Tài khoản & Vai trò"
+                  className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 text-left transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                  title="Tài khoản"
+                  aria-expanded={dropdownOpen}
                 >
-                  <div className="w-5 h-5 rounded bg-[#1e293b] text-white flex items-center justify-center font-mono font-bold text-[9px] overflow-hidden">
-                    <span className="text-[#00e599]">■</span>
-                  </div>
+                  <MemberAvatar name={user.name || userHandle} src={memberAvatarUrl !== undefined ? memberAvatarUrl : user.avatarUrl} size="sm" />
                   <div className="flex items-center space-x-1">
                     <span className="font-semibold text-xs text-[#1e293b] truncate max-w-[90px] sm:max-w-none">
-                      {userHandle}
+                      {memberUsername ? `@${memberUsername}` : userHandle}
                     </span>
                     <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
                       ({roleLabels[user.role].label})
@@ -275,17 +293,15 @@ export const Header: React.FC<HeaderProps> = ({
                 {dropdownOpen && (
                   <div className="absolute right-0 mt-1.5 w-64 bg-white rounded border border-[#d1d5db] shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
                     {/* Dropdown Header Card */}
-                    <div className="p-3 bg-[#2b2b2b] text-white border-b border-[#3b3b3b]">
+                    <div className="p-3 bg-slate-50 text-slate-900 border-b border-slate-100">
                       <div className="flex items-center space-x-2.5">
-                        <div className="w-8 h-8 rounded bg-[#1f2937] border border-[#00e599] flex items-center justify-center text-sm font-bold text-[#00e599] font-mono">
-                          ■
-                        </div>
+                        <MemberAvatar name={user.name || userHandle} src={memberAvatarUrl !== undefined ? memberAvatarUrl : user.avatarUrl} />
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white truncate">
-                            Xin chào, <span className="text-white font-bold">{user.name || userHandle}</span>
+                          <div className="text-sm font-semibold text-slate-900 truncate">
+                            {user.name || userHandle}
                           </div>
-                          <div className="mono text-[11px] text-slate-300 truncate flex items-center gap-1">
-                            <Mail className="w-3 h-3 text-[#00e599] shrink-0" />
+                          <div className="mono text-[11px] text-slate-500 truncate flex items-center gap-1">
+                            <Mail className="w-3 h-3 text-slate-400 shrink-0" />
                             <span className="truncate">{user.email}</span>
                           </div>
                         </div>
@@ -294,6 +310,26 @@ export const Header: React.FC<HeaderProps> = ({
 
                     {/* Section: Account Actions */}
                     <div className="py-1">
+                      <button
+                        onClick={() => {
+                          setDropdownOpen(false);
+                          onOpenOwnProfile();
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 transition cursor-pointer"
+                      >
+                        <User className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Hồ sơ của tôi</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDropdownOpen(false);
+                          onOpenAccountSettings();
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 transition cursor-pointer"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Cài đặt tài khoản</span>
+                      </button>
                       <button
                         onClick={() => {
                           setDropdownOpen(false);
@@ -335,27 +371,27 @@ export const Header: React.FC<HeaderProps> = ({
           />
 
           {/* Drawer Panel (Dark Matte Judge Aesthetic matching IMG_1730) */}
-          <div className="relative w-[280px] sm:w-[320px] max-w-[85vw] bg-[#1a1e24] text-slate-200 h-full shadow-2xl flex flex-col z-50 border-r border-[#2d333b] animate-in slide-in-from-left duration-200 overflow-y-auto">
+          <div className="relative w-[280px] sm:w-[320px] max-w-[85vw] bg-white text-slate-700 h-full shadow-2xl flex flex-col z-50 border-r border-slate-200 animate-in slide-in-from-left duration-200 overflow-y-auto">
             {/* Drawer Header with Cyan Accent & Close */}
-            <div className="p-4 border-b border-[#2d333b] bg-[#16191f] flex items-center justify-between">
+            <div className="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
                 <div className="flex flex-col space-y-0.75 w-5">
-                  <span className="block w-5 h-0.75 bg-[#00e599] rounded"></span>
-                  <span className="block w-5 h-0.75 bg-[#00e599] rounded"></span>
-                  <span className="block w-5 h-0.75 bg-[#00e599] rounded"></span>
+                  <span className="block w-5 h-0.75 bg-blue-600 rounded"></span>
+                  <span className="block w-5 h-0.75 bg-blue-600 rounded"></span>
+                  <span className="block w-5 h-0.75 bg-blue-600 rounded"></span>
                 </div>
                 <div>
-                  <div className="mono font-black text-white text-base tracking-wider">
-                    TIN<span className="text-[#00e599]">_MASTER</span>
+                  <div className="mono font-black text-slate-800 text-base tracking-wider">
+                    TIN<span className="text-blue-600">_MASTER</span>
                   </div>
-                  <div className="text-[10px] text-slate-400 font-mono">
+                  <div className="text-[10px] text-slate-500 font-mono">
                     OJ & Adaptive Learning
                   </div>
                 </div>
               </div>
               <button
                 onClick={() => setMobileDrawerOpen(false)}
-                className="w-8 h-8 rounded bg-[#232832] text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+                className="w-8 h-8 rounded-md bg-slate-100 text-slate-500 hover:text-slate-900 flex items-center justify-center transition cursor-pointer"
                 aria-label="Đóng menu"
               >
                 <X className="w-4 h-4" />
@@ -363,32 +399,30 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Quick User Card in Drawer */}
-            <div className="p-3.5 bg-[#20252e] border-b border-[#2d333b]">
+            <div className="p-3.5 bg-slate-50 border-b border-slate-200">
               <div className="flex items-center space-x-3">
-                <div className="w-9 h-9 rounded bg-[#12151a] border border-[#00e599] flex items-center justify-center text-sm font-bold text-[#00e599] font-mono shrink-0">
-                  ■
-                </div>
+                <MemberAvatar name={user.name || userHandle} src={memberAvatarUrl !== undefined ? memberAvatarUrl : user.avatarUrl} />
                 <div className="min-w-0 flex-1">
-                  <div className="font-bold text-sm text-white truncate flex items-center gap-1.5">
+                  <div className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5">
                     <span>{userHandle}</span>
-                    <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-[#00e599]/20 text-[#00e599] border border-[#00e599]/30">
+                    <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-100">
                       {roleLabels[user.role].icon}
                     </span>
                   </div>
-                  <div className="text-xs text-slate-400 truncate mono flex items-center gap-1">
-                    <Mail className="w-3 h-3 text-[#00e599] shrink-0" />
+                  <div className="text-xs text-slate-500 truncate mono flex items-center gap-1">
+                    <Mail className="w-3 h-3 text-slate-400 shrink-0" />
                     <span className="truncate">{user.email}</span>
                   </div>
                 </div>
               </div>
 
               {/* Quick Gamification stats inside drawer */}
-              <div className="mt-2.5 pt-2 border-t border-[#2d333b] flex items-center justify-between text-xs mono">
-                <div className="flex items-center space-x-1 text-amber-400">
+              <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-xs mono">
+                <div className="flex items-center space-x-1 text-amber-700">
                   <Flame className="w-3.5 h-3.5 fill-amber-500 text-amber-400" />
                   <span>Chuỗi: {user.streakDays} ngày</span>
                 </div>
-                <div className="flex items-center space-x-1 text-[#38bdf8]">
+                <div className="flex items-center space-x-1 text-blue-700">
                   <Award className="w-3.5 h-3.5" />
                   <span>Điểm: {user.xp} XP</span>
                 </div>
@@ -396,15 +430,15 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Navigation Menu (Replicating exact VNOI uppercase list from IMG_1730) */}
-            <nav className="flex-1 py-2 px-1 text-sm font-sans divide-y divide-[#232832]">
+            <nav className="flex-1 py-2 px-1 text-sm font-sans divide-y divide-slate-100">
               <div className="py-1">
                 {/* 1. HOME */}
                 <button
                   onClick={() => handleNavClick('dashboard')}
                   className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-left transition cursor-pointer ${
                     activeTab === 'dashboard'
-                      ? 'text-[#00e599] bg-[#232934] font-bold border-l-3 border-[#00e599]'
-                      : 'text-slate-300 hover:text-white hover:bg-[#20252e]'
+                      ? 'text-blue-700 bg-blue-50 font-bold border-l-3 border-blue-600'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
                   <span className="tracking-wider">HOME</span>
@@ -416,8 +450,8 @@ export const Header: React.FC<HeaderProps> = ({
                   onClick={() => handleNavClick('adaptive_practice')}
                   className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-left transition cursor-pointer ${
                     activeTab === 'adaptive_practice'
-                      ? 'text-[#00e599] bg-[#232934] font-bold border-l-3 border-[#00e599]'
-                      : 'text-slate-300 hover:text-white hover:bg-[#20252e]'
+                      ? 'text-blue-700 bg-blue-50 font-bold border-l-3 border-blue-600'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
                   <span className="tracking-wider">PROBLEMS</span>
@@ -429,8 +463,8 @@ export const Header: React.FC<HeaderProps> = ({
                   onClick={() => handleNavClick('exam_list')}
                   className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-left transition cursor-pointer ${
                     activeTab === 'exam_list' || activeTab === 'exam_simulation'
-                      ? 'text-[#00e599] bg-[#232934] font-bold border-l-3 border-[#00e599]'
-                      : 'text-slate-300 hover:text-white hover:bg-[#20252e]'
+                      ? 'text-blue-700 bg-blue-50 font-bold border-l-3 border-blue-600'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
                   <span className="tracking-wider">CONTESTS</span>
@@ -442,8 +476,8 @@ export const Header: React.FC<HeaderProps> = ({
                   onClick={() => handleNavClick('exam_review')}
                   className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-left transition cursor-pointer ${
                     activeTab === 'exam_review'
-                      ? 'text-[#00e599] bg-[#232934] font-bold border-l-3 border-[#00e599]'
-                      : 'text-slate-300 hover:text-white hover:bg-[#20252e]'
+                      ? 'text-blue-700 bg-blue-50 font-bold border-l-3 border-blue-600'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
                   <span className="tracking-wider">SUBMISSIONS</span>
@@ -452,7 +486,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {(user.role === 'teacher' || user.role === 'admin') && (
                   <button
                     onClick={() => handleNavClick('teacher_view')}
-                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                   >
                     <span className="tracking-wider">TEACHER</span>
                     <span className="text-xs text-slate-500">Phân tích lớp</span>
@@ -462,14 +496,14 @@ export const Header: React.FC<HeaderProps> = ({
                   <>
                     <button
                       onClick={() => window.location.assign('/admin/dashboard')}
-                      className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                      className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                     >
                       <span className="tracking-wider">ADMIN</span>
                       <span className="text-xs text-slate-500">Quản lý hệ thống</span>
                     </button>
                     <button
                       onClick={() => window.location.assign('/admin/setup-password')}
-                      className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                      className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                     >
                       <span className="tracking-wider">PASSWORD</span>
                       <span className="text-xs text-slate-500">Thiết lập hoặc đổi</span>
@@ -482,17 +516,17 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="py-1">
                 <button
                   onClick={() => setExpandedUsers(!expandedUsers)}
-                  className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                  className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                 >
-                  <span className="tracking-wider font-bold text-white flex items-center gap-1.5">
+                  <span className="tracking-wider font-bold text-slate-800 flex items-center gap-1.5">
                     USERS
-                    <span className="text-[10px] text-[#00e599]">({roleLabels[user.role].label})</span>
+                    <span className="text-[10px] text-blue-700">({roleLabels[user.role].label})</span>
                   </span>
-                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedUsers ? 'rotate-90 text-[#00e599]' : ''}`} />
+                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedUsers ? 'rotate-90 text-blue-600' : ''}`} />
                 </button>
 
                 {expandedUsers && (
-                  <div className="bg-[#14171d] my-1 rounded border border-[#2d333b] px-4 py-3 text-xs text-slate-300">
+                  <div className="bg-slate-50 my-1 rounded border border-slate-200 px-4 py-3 text-xs text-slate-600">
                     Vai trò được xác thực: <strong>{roleLabels[user.role].label}</strong>
                   </div>
                 )}
@@ -502,32 +536,43 @@ export const Header: React.FC<HeaderProps> = ({
                   onClick={() => handleNavClick('knowledge_map')}
                   className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-left transition cursor-pointer ${
                     activeTab === 'knowledge_map'
-                      ? 'text-[#00e599] bg-[#232934] font-bold border-l-3 border-[#00e599]'
-                      : 'text-slate-300 hover:text-white hover:bg-[#20252e]'
+                      ? 'text-blue-700 bg-blue-50 font-bold border-l-3 border-blue-600'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
                   <span className="tracking-wider">WIKI</span>
                   <span className="text-xs text-slate-500">Lộ trình & Kiến thức</span>
                 </button>
+                <button
+                  onClick={() => handleNavClick('member_directory')}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-left transition cursor-pointer ${
+                    activeTab === 'member_directory' || activeTab === 'public_profile'
+                      ? 'text-blue-700 bg-blue-50 font-bold border-l-3 border-blue-600'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="tracking-wider">MEMBERS</span>
+                  <span className="text-xs text-slate-500">Thành viên</span>
+                </button>
 
                 {/* 7. ABOUT > (Expandable like VNOI) */}
                 <button
                   onClick={() => setExpandedAbout(!expandedAbout)}
-                  className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                  className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                 >
                   <span className="tracking-wider">ABOUT</span>
-                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedAbout ? 'rotate-90 text-[#00e599]' : ''}`} />
+                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedAbout ? 'rotate-90 text-blue-600' : ''}`} />
                 </button>
 
                 {expandedAbout && (
-                  <div className="bg-[#14171d] my-1 p-3 rounded border border-[#2d333b] text-xs text-slate-400 space-y-2">
-                    <p className="font-semibold text-slate-200">
+                  <div className="bg-slate-50 my-1 p-3 rounded border border-slate-200 text-xs text-slate-600 space-y-2">
+                    <p className="font-semibold text-slate-800">
                       TinMaster Adaptive Learning Engine
                     </p>
                     <p className="leading-relaxed">
                       Ứng dụng mô hình Bayesian Knowledge Tracing (BKT) và vùng phát triển gần (ZPD) theo cấu trúc Đề thi Tốt nghiệp THPT 2025 của Bộ GD&ĐT.
                     </p>
-                    <div className="pt-1 text-[11px] text-[#00e599] mono flex items-center gap-1">
+                    <div className="pt-1 text-[11px] text-blue-700 mono flex items-center gap-1">
                       <Code2 className="w-3 h-3" />
                       <span>Version 1.0.4 • BGDĐT 2025</span>
                     </div>
@@ -541,7 +586,7 @@ export const Header: React.FC<HeaderProps> = ({
                       setMobileDrawerOpen(false);
                       onOpenGoogleWorkspace();
                     }}
-                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-300 hover:text-white hover:bg-[#20252e] transition cursor-pointer"
+                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                   >
                     <span className="tracking-wider">TẠP CHÍ</span>
                     <span className="text-xs text-slate-500">Xuất Google Docs</span>
@@ -555,7 +600,7 @@ export const Header: React.FC<HeaderProps> = ({
                       setMobileDrawerOpen(false);
                       onOpenVideoModal();
                     }}
-                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-[#38bdf8] hover:bg-[#20252e] transition cursor-pointer"
+                    className="w-full flex items-center justify-between px-4 py-2.5 rounded text-left text-blue-700 hover:bg-blue-50 transition cursor-pointer"
                   >
                     <span className="tracking-wider flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-[#38bdf8]" />
@@ -568,13 +613,33 @@ export const Header: React.FC<HeaderProps> = ({
             </nav>
 
             {/* Bottom Actions: Log in / Sign up / Switch Gmail */}
-            <div className="p-3 border-t border-[#2d333b] bg-[#16191f] space-y-2">
+            <div className="p-3 border-t border-slate-200 bg-white space-y-2">
+              <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  onOpenOwnProfile();
+                }}
+                className="w-full py-2 px-3 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-md text-xs font-semibold flex items-center justify-center space-x-2"
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Hồ sơ của tôi</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  onOpenAccountSettings();
+                }}
+                className="w-full py-2 px-3 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-md text-xs font-semibold flex items-center justify-center space-x-2"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Cài đặt tài khoản</span>
+              </button>
               <button
                 onClick={() => {
                   setMobileDrawerOpen(false);
                   onRedeemTeacherInvitation();
                 }}
-                className="w-full py-2 px-3 border border-slate-600 text-slate-200 rounded text-xs font-bold flex items-center justify-center space-x-2"
+                className="w-full py-2 px-3 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-md text-xs font-semibold flex items-center justify-center space-x-2"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>Nhập mã mời giáo viên</span>
@@ -590,9 +655,9 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>Đăng xuất</span>
               </button>
 
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 px-1">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 px-1">
                 <span>© 2025 TinMaster OJ</span>
-                <span className="text-[#00e599] mono">ONLINE ●</span>
+                <span className="text-blue-600 mono">TINMASTER</span>
               </div>
             </div>
           </div>

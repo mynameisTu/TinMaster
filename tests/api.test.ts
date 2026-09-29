@@ -241,16 +241,18 @@ test('AI endpoints retain their no-key fallback contracts', async () => {
 
 test('AI and extraction endpoints reject missing or invalid Supabase sessions', async () => {
   const callsBefore = rateLimitCalls.length;
-  const response = await fetch(`${baseUrl}/api/ai/explain`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), {
-    error: 'Authentication required',
-    code: 'AUTH_REQUIRED',
-  });
+  for (const endpoint of ['/api/ai/explain', '/api/ai/video-script']) {
+    const response = await fetch(`${baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), {
+      error: 'Authentication required',
+      code: 'AUTH_REQUIRED',
+    });
+  }
 
   const invalidResponse = await fetch(`${baseUrl}/api/exercises/extract-file`, {
     method: 'POST',

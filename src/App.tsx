@@ -40,6 +40,10 @@ import { SelectTrackModal } from './components/SelectTrackModal';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { TeacherInvitationModal } from './components/TeacherInvitationModal';
 import { AuthenticationRoute } from './components/AuthPages';
+import { MemberDirectory } from './components/MemberDirectory';
+import { AccountSettingsPage, PublicMemberProfilePage } from './components/MemberPages';
+import { supabase } from './services/supabaseClient';
+import { createAvatarUrl, getMyMemberProfile, type MemberProfile } from './services/memberService';
 
 import {
   Play,
@@ -70,8 +74,23 @@ function AppRoutes() {
   return <TinMasterApp />;
 }
 
+function pageFromLocation(): { tab: string; username: string | null } {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (path === '/members') return { tab: 'member_directory', username: null };
+  if (path.startsWith('/members/')) {
+    return { tab: 'public_profile', username: decodeURIComponent(path.slice('/members/'.length)) };
+  }
+  if (path === '/settings') return { tab: 'account_settings', username: null };
+  return { tab: 'dashboard', username: null };
+}
+
 function TinMasterApp() {
   const auth = useAuth();
+  const initialPage = pageFromLocation();
+  const [activeTab, setActiveTab] = useState<string>(initialPage.tab);
+  const [profileTarget, setProfileTarget] = useState<string | null>(initialPage.username);
+  const [memberProfile, setMemberProfile] = useState<MemberProfile | null>(null);
+  const [memberAvatarUrl, setMemberAvatarUrl] = useState<string | null>(null);
 
   // 1. User State
   const [userState, setUser] = useState<UserProfile>({
@@ -153,7 +172,6 @@ function TinMasterApp() {
   };
 
   // 3. Navigation & Modals
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [currentExamSession, setCurrentExamSession] = useState<ExamSession | null>(null);
   const [showVideoModal, setShowVideoModal] = useState<boolean>(false);
   const [videoConceptId, setVideoConceptId] = useState<string | undefined>(undefined);
@@ -202,21 +220,74 @@ function TinMasterApp() {
   const [currentExamItem, setCurrentExamItem] = useState<ExamCatalogItem | undefined>(undefined);
 
   useEffect(() => {
-    if (!auth.profile) return;
-    setActiveTab('dashboard');
-  }, [auth.profile]);
+    if (auth.status !== 'authenticated' || !supabase) {
+      setMemberProfile(null);
+      setMemberAvatarUrl(null);
+      return;
+    }
+
+    const client = supabase;
+    let active = true;
+    void getMyMemberProfile(client)
+      .then(async (profile) => {
+        const avatarUrl = await createAvatarUrl(client, profile.avatarPath);
+        if (active) {
+          setMemberProfile(profile);
+          setMemberAvatarUrl(avatarUrl);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMemberProfile(null);
+          setMemberAvatarUrl(null);
+        }
+      });
+    return () => { active = false; };
+  }, [auth.status, auth.profile?.id, auth.profile?.displayName]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const page = pageFromLocation();
+      setActiveTab(page.tab);
+      setProfileTarget(page.username);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (tab: string, username?: string | null) => {
+    setActiveTab(tab);
+    setProfileTarget(username ?? null);
+    const path = tab === 'member_directory'
+      ? '/members'
+      : tab === 'account_settings'
+        ? '/settings'
+        : tab === 'public_profile' && username
+          ? `/members/${encodeURIComponent(username)}`
+          : '/';
+    window.history.pushState({}, '', path);
+  };
+
+  const handleMemberProfileSaved = (profile: MemberProfile) => {
+    setMemberProfile(profile);
+    if (supabase) {
+      void createAvatarUrl(supabase, profile.avatarPath)
+        .then(setMemberAvatarUrl)
+        .catch(() => setMemberAvatarUrl(null));
+    }
+  };
 
   const user: UserProfile = auth.profile
     ? {
       ...userState,
       id: auth.profile.id,
-      name: auth.profile.displayName,
+      name: memberProfile?.displayName ?? auth.profile.displayName,
       email: auth.profile.email,
       role: auth.profile.role,
-      avatarUrl: auth.profile.avatarUrl,
+      avatarUrl: memberAvatarUrl ?? auth.profile.avatarUrl,
       school: auth.profile.school,
       grade: auth.profile.grade,
-      examTrack: auth.profile.examTrack ?? userState.examTrack,
+      examTrack: memberProfile ? memberProfile.examTrack : auth.profile.examTrack ?? userState.examTrack,
       targetScore: auth.profile.targetScore,
     }
     : userState;
@@ -593,10 +664,29 @@ function TinMasterApp() {
       {/* 1. APP HEADER */}
       <Header
         user={user}
+        memberUsername={memberProfile?.username ?? undefined}
+        memberAvatarUrl={memberAvatarUrl}
         onSignOut={() => void auth.signOut()}
         onRedeemTeacherInvitation={() => setShowTeacherInvitationModal(true)}
         activeTab={activeTab}
-        onTabChange={(tab) => setActiveTab(tab)}
+        onTabChange={(tab) => {
+          if (tab === 'member_directory') navigateTo('member_directory');
+          else if (tab === 'account_settings') navigateTo('account_settings');
+          else if (tab === 'public_profile') {
+            if (memberProfile?.username) navigateTo('public_profile', memberProfile.username);
+            else navigateTo('account_settings');
+          } else {
+            setActiveTab(tab);
+            if (['dashboard', 'adaptive_practice', 'exam_list', 'knowledge_map', 'teacher_view'].includes(tab)) {
+              window.history.pushState({}, '', '/');
+            }
+          }
+        }}
+        onOpenOwnProfile={() => {
+          if (memberProfile?.username) navigateTo('public_profile', memberProfile.username);
+          else navigateTo('account_settings');
+        }}
+        onOpenAccountSettings={() => navigateTo('account_settings')}
         onOpenVideoModal={() => handleOpenVideoModal()}
         onOpenGoogleWorkspace={() => setShowWorkspaceModal(true)}
         onOpenTrackModal={() => setShowSelectTrackModal(true)}
@@ -701,6 +791,29 @@ function TinMasterApp() {
           <TeacherDashboard
             onOpenVideoModal={() => handleOpenVideoModal()}
             onOpenGoogleWorkspace={() => setShowWorkspaceModal(true)}
+          />
+        )}
+
+        {activeTab === 'member_directory' && (
+          <MemberDirectory
+            onOpenMember={(username) => navigateTo('public_profile', username)}
+          />
+        )}
+
+        {activeTab === 'public_profile' && (
+          <PublicMemberProfilePage
+            username={profileTarget ?? memberProfile?.username ?? ''}
+            ownProfile={memberProfile}
+            onBack={() => navigateTo('member_directory')}
+            onOpenSettings={() => navigateTo('account_settings')}
+          />
+        )}
+
+        {activeTab === 'account_settings' && (
+          <AccountSettingsPage
+            email={auth.profile?.email ?? ''}
+            onBack={() => navigateTo('dashboard')}
+            onSaved={handleMemberProfileSaved}
           />
         )}
 

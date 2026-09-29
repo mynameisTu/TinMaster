@@ -248,22 +248,34 @@ export const ExamsCatalogView: React.FC<ExamsCatalogViewProps> = ({
 
             <div className="card-stat space-y-1">
               <span className="text-xs text-slate-500 font-medium">Lượt học sinh đã thi</span>
-              <div className="text-2xl font-bold text-slate-900">{classResults.length}</div>
-              <span className="text-[11px] text-slate-500 block">Tỷ lệ nộp bài 94.5%</span>
+              <div className="text-2xl font-bold text-slate-900">
+                {classResults.length || '—'}
+              </div>
+              <span className="text-[11px] text-slate-500 block">
+                {classResults.length ? 'Bài thi đã ghi nhận' : 'Chưa có dữ liệu lớp học'}
+              </span>
             </div>
 
             <div className="card-stat space-y-1">
               <span className="text-xs text-slate-500 font-medium">Điểm trung bình khối</span>
-              <div className="text-2xl font-bold text-slate-900">{classAverageScore}/10</div>
-              <span className="text-[11px] text-slate-500 block">Dựa trên các bài thi đã nộp</span>
+              <div className="text-2xl font-bold text-slate-900">
+                {classResults.length ? `${classAverageScore}/10` : '—'}
+              </div>
+              <span className="text-[11px] text-slate-500 block">
+                {classResults.length ? 'Trung bình bài thi đã ghi nhận' : 'Chưa có kết quả'}
+              </span>
             </div>
 
             <div className="card-stat space-y-1">
               <span className="text-xs text-slate-500 font-medium">Học sinh đạt điểm Giỏi (8+)</span>
               <div className="text-2xl font-bold text-slate-900">
-                {classResults.filter((c) => c.score >= 8.0).length} / {classResults.length}
+                {classResults.length
+                  ? `${classResults.filter((c) => c.score >= 8.0).length} / ${classResults.length}`
+                  : '—'}
               </div>
-              <span className="text-[11px] text-slate-500 block">Chiếm 62.5% lớp</span>
+              <span className="text-[11px] text-slate-500 block">
+                {classResults.length ? 'Kết quả từ bài thi đã ghi nhận' : 'Chưa có kết quả'}
+              </span>
             </div>
           </>
         )}
@@ -744,29 +756,34 @@ export const ExamsCatalogView: React.FC<ExamsCatalogViewProps> = ({
                   </p>
                 </div>
                 <span className="text-xs text-blue-700 font-bold bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
-                  {classResults.length} bài nộp
+                  {classResults.length || '—'} kết quả
                 </span>
               </div>
 
-              {/* Bar Visualizer */}
-              <div className="space-y-3 pt-2">
-                {scoreDistribution.map((item) => (
-                  <div key={item.range} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-slate-700">{item.range} điểm</span>
-                      <span className="text-slate-500">
-                        {item.count} học sinh ({item.percent}%)
-                      </span>
+              {classResults.length ? (
+                <div className="space-y-3 pt-2">
+                  {scoreDistribution.map((item) => (
+                    <div key={item.range} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">{item.range} điểm</span>
+                        <span className="text-slate-500">
+                          {item.count} học sinh ({item.percent}%)
+                        </span>
+                      </div>
+                      <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
+                        <div
+                          className={`h-full ${item.color} rounded-full transition-all duration-500`}
+                          style={{ width: `${item.percent}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
-                      <div
-                        className={`h-full ${item.color} rounded-full transition-all duration-500`}
-                        style={{ width: `${Math.max(item.percent, 4)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  Chưa có dữ liệu kết quả lớp học.
+                </p>
+              )}
             </div>
 
             {/* Teaching Insight Card */}
@@ -774,20 +791,14 @@ export const ExamsCatalogView: React.FC<ExamsCatalogViewProps> = ({
               <div className="space-y-3">
                 <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-purple-700">
                   <Sparkles className="w-4 h-4 text-purple-600" />
-                  <span>Khuyến Nghị Sư Phạm AI</span>
+                  <span>Hỗ trợ sư phạm</span>
                 </div>
-                <h4 className="text-base font-bold text-slate-900">
-                  Phân Tích Ma Trận Điểm Khối 12
-                </h4>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  Học sinh làm tốt phần trắc nghiệm đơn (Đạt 88% tỷ lệ đúng ở Phần I). Tuy nhiên ở{' '}
-                  <strong className="text-slate-900 font-bold">Phần II (Đúng/Sai)</strong>, tỷ lệ đạt trọn 1.0 điểm/câu chỉ đạt{' '}
-                  <strong className="text-purple-700 font-bold">38%</strong> do nhầm lẫn câu lệnh truy vấn SQL có điều kiện lồng nhau.
+                <h4 className="text-base font-bold text-slate-900">Khuyến nghị sư phạm</h4>
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                  {classResults.length
+                    ? 'Chưa có phân tích được xác minh cho các kết quả này.'
+                    : 'Chưa có dữ liệu để đưa ra khuyến nghị.'}
                 </p>
-                <div className="p-3 bg-purple-50 rounded-xl border border-purple-100 text-xs text-purple-800 space-y-1">
-                  <strong>Đề xuất ôn tập:</strong>
-                  <p>Mở bài kiểm tra 15 phút tập trung vào các câu hỏi phân loại Đúng/Sai mệnh đề SQL.</p>
-                </div>
               </div>
 
               <button
@@ -813,11 +824,13 @@ export const ExamsCatalogView: React.FC<ExamsCatalogViewProps> = ({
               </div>
 
               <div className="text-xs text-slate-500 font-medium">
-                Đang hiển thị {classResults.length} học sinh
+                {classResults.length
+                  ? `Đang hiển thị ${classResults.length} kết quả`
+                  : 'Chưa có dữ liệu kết quả'}
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            {classResults.length ? <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50/70">
@@ -889,7 +902,11 @@ export const ExamsCatalogView: React.FC<ExamsCatalogViewProps> = ({
                   })}
                 </tbody>
               </table>
-            </div>
+            </div> : (
+              <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                Chưa có dữ liệu xếp lớp. Kết quả đã xác minh sẽ hiển thị tại đây.
+              </p>
+            )}
           </div>
         </div>
       )}

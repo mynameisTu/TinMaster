@@ -123,7 +123,7 @@ export const GoogleSignInModal: React.FC<GoogleSignInModalProps> = ({
                 <label className="auth-remember">
                   <input type="checkbox" checked={rememberMe}
                     onChange={(event) => setRememberMe(event.target.checked)} />
-                  <span>Ghi nhớ đăng nhập trong 30 ngày</span>
+                  <span>Ghi nhớ đăng nhập trên thiết bị này</span>
                 </label>
                 <a href="/forgot-password" className="auth-link">Quên mật khẩu?</a>
               </div>

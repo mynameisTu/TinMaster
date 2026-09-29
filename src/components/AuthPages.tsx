@@ -48,16 +48,6 @@ function AuthMessage({ error, success }: { error?: string | null; success?: stri
   return null;
 }
 
-function passwordError(error: unknown): string {
-  const code = error && typeof error === 'object' && 'code' in error
-    ? String(error.code)
-    : '';
-  if (code === 'invalid_credentials' || (error instanceof Error && /invalid login credentials/i.test(error.message))) {
-    return 'Email hoặc mật khẩu không chính xác.';
-  }
-  return 'Không thể hoàn tất xác thực lúc này. Vui lòng thử lại sau.';
-}
-
 export function RegistrationPage() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');

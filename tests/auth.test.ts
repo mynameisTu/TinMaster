@@ -27,6 +27,10 @@ import {
   AuthConfigurationError,
 } from '../src/services/authService';
 import { createAuthStorageAdapter } from '../src/services/authStorage';
+import {
+  authStateReducer,
+  initialAuthState,
+} from '../src/auth/authState';
 
 const authUser = {
   id: 'verified-supabase-auth-uuid',
@@ -169,6 +173,118 @@ test('sign-out delegates to Supabase and surfaces provider errors', async () => 
   );
 });
 
+test('auth state reducer restores sessions and handles authentication-state events', () => {
+  const session = { user: authUser, access_token: 'restored-token' } as Session;
+  const profile = {
+    id: authUser.id,
+    email: authUser.email ?? '',
+    displayName: 'Student',
+    role: 'student' as const,
+    targetScore: 8.5,
+  };
+
+  const restoring = authStateReducer(initialAuthState, {
+    type: 'session_restored',
+    session,
+    generation: 1,
+  });
+  assert.equal(restoring.status, 'loading');
+  assert.equal(restoring.session, session);
+
+  const signedIn = authStateReducer(restoring, {
+    type: 'profile_loaded',
+    profile,
+    generation: 1,
+  });
+  assert.equal(signedIn.status, 'authenticated');
+  assert.equal(signedIn.profile, profile);
+
+  const recovering = authStateReducer(signedIn, {
+    type: 'auth_event',
+    event: 'PASSWORD_RECOVERY',
+    session,
+    generation: 2,
+  });
+  assert.equal(recovering.status, 'loading');
+  assert.equal(recovering.passwordRecoveryReady, true);
+
+  const signedOut = authStateReducer(recovering, {
+    type: 'auth_event',
+    event: 'SIGNED_OUT',
+    session: null,
+    generation: 3,
+  });
+  assert.equal(signedOut.status, 'signed_out');
+  assert.equal(signedOut.session, null);
+  assert.equal(signedOut.profile, null);
+  assert.equal(signedOut.passwordRecoveryReady, false);
+});
+
+test('stale asynchronous profile loads cannot overwrite a newer session or sign-out', () => {
+  const firstSession = {
+    user: authUser,
+    access_token: 'first-session',
+  } as Session;
+  const secondUser = { ...authUser, id: 'second-user-uuid' } as User;
+  const secondSession = {
+    user: secondUser,
+    access_token: 'second-session',
+  } as Session;
+  const firstProfile = {
+    id: authUser.id,
+    email: authUser.email ?? '',
+    displayName: 'First user',
+    role: 'student' as const,
+    targetScore: 8.5,
+  };
+  const secondProfile = {
+    ...firstProfile,
+    id: secondUser.id,
+    displayName: 'Second user',
+  };
+
+  let state = authStateReducer(initialAuthState, {
+    type: 'auth_event',
+    event: 'SIGNED_IN',
+    session: firstSession,
+    generation: 1,
+  });
+  state = authStateReducer(state, {
+    type: 'auth_event',
+    event: 'TOKEN_REFRESHED',
+    session: secondSession,
+    generation: 2,
+  });
+  const afterStaleResult = authStateReducer(state, {
+    type: 'profile_loaded',
+    profile: firstProfile,
+    generation: 1,
+  });
+  assert.equal(afterStaleResult.session, secondSession);
+  assert.equal(afterStaleResult.profile, null);
+
+  state = authStateReducer(afterStaleResult, {
+    type: 'profile_loaded',
+    profile: secondProfile,
+    generation: 2,
+  });
+  assert.equal(state.profile, secondProfile);
+
+  state = authStateReducer(state, {
+    type: 'auth_event',
+    event: 'SIGNED_OUT',
+    session: null,
+    generation: 3,
+  });
+  state = authStateReducer(state, {
+    type: 'profile_loaded',
+    profile: secondProfile,
+    generation: 2,
+  });
+  assert.equal(state.status, 'signed_out');
+  assert.equal(state.profile, null);
+});
+
 test('Google sign-in uses OAuth and the current origin as the redirect', async () => {
   const previousWindow = globalThis.window;
   Object.defineProperty(globalThis, 'window', {
@@ -290,7 +406,7 @@ test('Google sign-in uses OAuth and the current origin as the redirect', async (
       { code: 'unexpected_failure', status: 500 }
     );
     const registrationMessage = authErrorMessage(smtpError, 'registration');
-    assert.match(registrationMessage, /SMTP/);
+    assert.match(registrationMessage, /Chưa thể gửi email xác minh/);
     assert.match(registrationMessage, /unexpected_failure/);
     assert.match(registrationMessage, /500/);
     assert.doesNotMatch(registrationMessage, /secret smtp credentials/i);
@@ -302,6 +418,33 @@ test('Google sign-in uses OAuth and the current origin as the redirect', async (
       'Nếu tài khoản có thể khôi phục, hướng dẫn sẽ được gửi tới email đã nhập.'
     );
   });
+
+test('OAuth, session, and sign-out errors are safe Vietnamese messages', () => {
+  const rawError = Object.assign(
+    new Error('Raw provider response contains a private token abc-secret'),
+    { code: 'provider_disabled', status: 400 }
+  );
+  const oauthMessage = authErrorMessage(rawError, 'oauth');
+  assert.match(oauthMessage, /Đăng nhập Google chưa được bật/);
+  assert.match(oauthMessage, /provider_disabled/);
+  assert.doesNotMatch(oauthMessage, /abc-secret|Raw provider response/);
+
+  const sessionMessage = authErrorMessage(
+    Object.assign(new Error('refresh token value xyz-secret'), {
+      code: 'invalid_refresh_token',
+    }),
+    'session'
+  );
+  assert.equal(sessionMessage, 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+  assert.doesNotMatch(sessionMessage, /xyz-secret/);
+
+  const logoutMessage = authErrorMessage(
+    new Error('server response includes authorization=secret'),
+    'logout'
+  );
+  assert.match(logoutMessage, /Không thể đăng xuất an toàn/);
+  assert.doesNotMatch(logoutMessage, /authorization=secret/);
+});
 
   test('password sign-in uses Supabase credentials and returns its session', async () => {
     const session = { user: authUser, access_token: 'test-token' } as Session;

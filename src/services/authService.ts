@@ -123,7 +123,13 @@ export class AuthConfigurationError extends Error {
   }
 }
 
-export type AuthErrorFlow = 'registration' | 'recovery' | 'login';
+export type AuthErrorFlow =
+  | 'registration'
+  | 'recovery'
+  | 'login'
+  | 'oauth'
+  | 'session'
+  | 'logout';
 
 function authErrorDetails(error: unknown): { code: string | null; status: number | null } {
   if (!error || typeof error !== 'object') return { code: null, status: null };
@@ -161,14 +167,35 @@ export function authErrorMessage(error: unknown, flow: AuthErrorFlow): string {
       ? `HTTP ${status} từ Supabase Auth.`
       : 'Không nhận được mã lỗi từ Supabase Auth.';
 
+  if (flow === 'oauth' && ['provider_disabled', 'unsupported_provider'].includes(code ?? '')) {
+    return `Đăng nhập Google chưa được bật. ${identifier}`;
+  }
+  if (flow === 'oauth' && (status !== null && status >= 500)) {
+    return `Đăng nhập Google đang gặp sự cố tạm thời. Vui lòng thử lại sau. ${identifier}`;
+  }
+  if (flow === 'oauth' && (code === 'network_error' || code === 'fetch_error')) {
+    return 'Không thể kết nối để đăng nhập Google. Kiểm tra mạng rồi thử lại.';
+  }
+  if (code === 'access_denied' || code === 'user_cancelled') {
+    return 'Bạn đã hủy đăng nhập. Hãy thử lại nếu muốn tiếp tục.';
+  }
+  if (flow === 'session') {
+    if (code === 'refresh_token_not_found' || code === 'invalid_refresh_token') {
+      return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+    }
+    return `Không thể khôi phục phiên đăng nhập. Vui lòng tải lại trang hoặc đăng nhập lại. ${identifier}`;
+  }
+  if (flow === 'logout') {
+    return `Không thể đăng xuất an toàn lúc này. Vui lòng thử lại. ${identifier}`;
+  }
   if (code === 'weak_password' || code === 'password_too_short') {
     return `Mật khẩu không đáp ứng chính sách bảo mật của Supabase. ${identifier}`;
   }
   if (code === 'over_email_send_rate_limit' || code === 'over_request_rate_limit' || status === 429) {
-    return `Supabase Auth đang giới hạn yêu cầu. Vui lòng chờ rồi thử lại. ${identifier}`;
+    return `Bạn đã gửi quá nhiều yêu cầu. Vui lòng chờ rồi thử lại. ${identifier}`;
   }
   if (code === 'email_provider_disabled' || code === 'signup_disabled') {
-    return `Supabase chưa bật đăng ký email/mật khẩu cho dự án này. ${identifier}`;
+    return `Đăng ký email và mật khẩu hiện chưa khả dụng. Vui lòng liên hệ quản trị viên. ${identifier}`;
   }
   if (
     code === 'redirect_to_not_allowed' ||
@@ -178,10 +205,10 @@ export function authErrorMessage(error: unknown, flow: AuthErrorFlow): string {
     return `URL chuyển hướng chưa được cho phép trong Supabase Auth. ${identifier}`;
   }
   if (flow === 'recovery' && (status !== null && status >= 500)) {
-    return `Supabase Auth không gửi được email khôi phục. Kiểm tra SMTP và Auth Logs. ${identifier}`;
+    return `Chưa thể gửi email khôi phục lúc này. Vui lòng thử lại sau. ${identifier}`;
   }
   if (flow === 'registration' && (status !== null && status >= 500)) {
-    return `Supabase Auth không gửi được email xác minh. Kiểm tra SMTP và Auth Logs. ${identifier}`;
+    return `Chưa thể gửi email xác minh lúc này. Vui lòng thử lại sau. ${identifier}`;
   }
   if (flow === 'login' && (code === 'invalid_credentials' || status === 400)) {
     return 'Email hoặc mật khẩu không chính xác.';
