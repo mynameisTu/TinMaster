@@ -1,25 +1,4 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+TinMaster – Hệ thống luyện thi Tin học THPT thích ứng
 
-# Run and deploy your AI Studio app
+TinMaster là dự án Khoa học Kỹ thuật hướng đến việc xây dựng nền tảng ôn luyện thông minh cho học sinh THPT. Dự án ứng dụng trí tuệ nhân tạo (AI) để phân tích năng lực học tập, cá nhân hóa lộ trình ôn luyện và hỗ trợ học sinh chuẩn bị hiệu quả cho kỳ thi tốt nghiệp THPT môn Tin học.
 
-This contains everything you need to run your app locally.
-https://ai.studio/apps/be286383-26c1-4057-bd6d-1f1c383bd56a
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Copy `.env.example` to `.env` and set `GEMINI_API_KEY` in the local file
-3. Run the app:
-   `npm run dev`
-
-For Vercel deployment and the current Supabase Storage upload limitations, see
-[the deployment guide](docs/deployment-vercel.md).
-
-For Google OAuth, Supabase Auth, initial administrator provisioning, and
-teacher-role security setup, see [the Supabase Auth guide](docs/supabase-auth-setup.md).
