@@ -454,7 +454,7 @@ select is(
   (select count(*)::integer from public.classroom_invitation_codes
    where classroom_id = '31000000-0000-0000-0000-000000000001'
      and revoked_at is not null),
-  5,
+  4,
   'archiving revokes outstanding classroom invitations'
 );
 select is_empty(

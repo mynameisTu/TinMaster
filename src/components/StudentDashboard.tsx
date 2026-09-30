@@ -24,6 +24,8 @@ import {
   Code2,
   Globe,
 } from 'lucide-react';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { ClassroomStudentSection } from './ClassroomStudentSection';
 
 interface StudentDashboardProps {
   user: UserProfile;
@@ -38,6 +40,7 @@ interface StudentDashboardProps {
   onOpenVideoModal: (conceptId?: string) => void;
   onNavigateToKnowledgeMap: () => void;
   onNavigateToExercises?: () => void;
+  client?: SupabaseClient | null;
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
@@ -53,6 +56,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onOpenVideoModal,
   onNavigateToKnowledgeMap,
   onNavigateToExercises,
+  client,
 }) => {
   // Tính điểm năng lực trung bình ước lượng (quy đổi thang 10)
   const masteryValues = Object.values(masteries);
@@ -196,6 +200,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] 2xl:grid-cols-[1fr_420px] lg:grid-cols-[1fr_350px] gap-6 sm:gap-7">
         {/* LEFT COLUMN: TABLES & CORE WORKFLOW */}
         <div className="space-y-6">
+          {/* Lớp học của học sinh (Classroom Student Section) */}
+          <ClassroomStudentSection client={client} />
+
           {/* Card 1: Nhiệm vụ luyện tập hôm nay */}
           <div className="panel">
             <div className="flex items-center justify-between pb-3.5 mb-3.5 border-b border-slate-200">
