@@ -9,6 +9,10 @@ import {
 } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
 import {
+  ExerciseExtractionError,
+  extractQuestionsFromFile,
+} from '../services/exerciseService';
+import {
   Upload,
   FileText,
   Image as ImageIcon,
@@ -93,6 +97,7 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
 
   // Processing state
   const [currentProcessingIndex, setCurrentProcessingIndex] = useState(0);
+  const extractionInProgressRef = useRef(false);
 
   // Review step state
   const [draftQuestions, setDraftQuestions] = useState<ExtractedQuestionDraft[]>([]);
@@ -198,111 +203,131 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
 
   // Start processing pipeline
   const handleStartExtraction = async () => {
-    if (filesList.length === 0) return;
+    if (filesList.length === 0 || extractionInProgressRef.current || currentStep === 2) return;
 
-    setCurrentStep(2);
-    setCurrentProcessingIndex(0);
-    const accumulatedDrafts: ExtractedQuestionDraft[] = [];
+    extractionInProgressRef.current = true;
+    try {
+      setValidationError(null);
+      setCurrentStep(2);
+      setCurrentProcessingIndex(0);
+      const accumulatedDrafts: ExtractedQuestionDraft[] = [];
+      const extractionErrors: string[] = [];
 
-    // Read answer key base64 if present
-    let answerKeyPayload: any = undefined;
-    if (answerKeyFile) {
-      try {
-        const keyB64 = await fileToBase64(answerKeyFile.file);
-        answerKeyPayload = {
-          name: answerKeyFile.name,
-          type: getFileCategory(answerKeyFile.name),
-          mimeType: answerKeyFile.file.type,
-          base64: keyB64,
-        };
-      } catch (err) {
-        console.warn('Could not read answer key file:', err);
+      let answerKeyPayload: any = undefined;
+      if (answerKeyFile) {
+        try {
+          const keyB64 = await fileToBase64(answerKeyFile.file);
+          answerKeyPayload = {
+            name: answerKeyFile.name,
+            type: getFileCategory(answerKeyFile.name),
+            mimeType: answerKeyFile.file.type,
+            base64: keyB64,
+          };
+        } catch (err) {
+          console.warn('Could not read answer key file:', err);
+        }
       }
-    }
 
-    // Process each file in the batch sequentially
-    for (let i = 0; i < filesList.length; i++) {
-      setCurrentProcessingIndex(i);
-      const current = filesList[i];
+      for (let i = 0; i < filesList.length; i++) {
+        setCurrentProcessingIndex(i);
+        const current = filesList[i];
 
-      // Update current file status to extracting
-      setFilesList((prev) =>
-        prev.map((item, idx) => (idx === i ? { ...item, status: 'extracting' } : item))
-      );
+        setFilesList((prev) =>
+          prev.map((item, idx) => (idx === i ? { ...item, status: 'extracting' } : item))
+        );
 
-      try {
-        const base64Data = await fileToBase64(current.file);
+        try {
+          const base64Data = await fileToBase64(current.file);
 
-        const response = await fetch('/api/exercises/extract-file', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            file: {
+          const data = await extractQuestionsFromFile(
+            {
               name: current.name,
               type: current.typeCategory,
               mimeType: current.file.type,
               base64: base64Data,
             },
-            answerKeyFile: answerKeyPayload,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
-          const uniqueBatchQuestions = data.questions.map((q: any, qIdx: number) => ({
-            ...q,
-            id: q.id
-              ? `${q.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${qIdx + 1}`
-              : `Q_IMP_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${qIdx + 1}`,
-          }));
-          accumulatedDrafts.push(...uniqueBatchQuestions);
-          setFilesList((prev) =>
-            prev.map((item, idx) =>
-              idx === i
-                ? {
-                    ...item,
-                    status: 'completed',
-                    extractedCount: data.questions.length,
-                  }
-                : item
-            )
+            answerKeyPayload
           );
-        } else {
-          // Graceful error per file without breaking the rest
+
+          if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
+            const extractedQuestions = data.questions;
+            const uniqueBatchQuestions = extractedQuestions.map((q, qIdx) => ({
+              ...q,
+              id: q.id
+                ? `${q.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${qIdx + 1}`
+                : `Q_IMP_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${qIdx + 1}`,
+            }));
+            accumulatedDrafts.push(...uniqueBatchQuestions);
+            setFilesList((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: 'completed',
+                      extractedCount: extractedQuestions.length,
+                    }
+                  : item
+              )
+            );
+          } else {
+            const errorMessage =
+              data.error || 'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.';
+            extractionErrors.push(`${current.name}: ${errorMessage}`);
+            setFilesList((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: 'error',
+                      errorMessage,
+                    }
+                  : item
+              )
+            );
+          }
+        } catch (err: unknown) {
+          const errorMessage =
+            err instanceof ExerciseExtractionError
+              ? err.message
+              : 'Không thể đọc tệp đã chọn. Tệp vẫn được giữ lại; vui lòng thử lại.';
+          extractionErrors.push(`${current.name}: ${errorMessage}`);
           setFilesList((prev) =>
             prev.map((item, idx) =>
               idx === i
                 ? {
                     ...item,
                     status: 'error',
-                    errorMessage:
-                      data.error ||
-                      'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.',
+                    errorMessage,
                   }
                 : item
             )
           );
         }
-      } catch (err: any) {
-        setFilesList((prev) =>
-          prev.map((item, idx) =>
-            idx === i
-              ? {
-                  ...item,
-                  status: 'error',
-                  errorMessage:
-                    'Không thể đọc file này, vui lòng thử lại hoặc nhập thủ công.',
-                }
-              : item
-          )
+      }
+
+      setDraftQuestions(accumulatedDrafts);
+      if (accumulatedDrafts.length === 0) {
+        setValidationError(`Không thể trích xuất câu hỏi. ${extractionErrors.join(' ')}`);
+        setCurrentStep(1);
+        return;
+      }
+
+      if (extractionErrors.length > 0) {
+        setValidationError(
+          `Một số file không trích xuất được; chỉ các câu hỏi đọc thành công được đưa vào bước rà soát. ${extractionErrors.join(' ')}`
         );
       }
+      setCurrentStep(3);
+    } catch (error: unknown) {
+      setValidationError(
+        error instanceof ExerciseExtractionError
+          ? error.message
+          : 'Không thể đọc tệp đã chọn. Tệp vẫn được giữ lại; vui lòng thử lại.'
+      );
+      setCurrentStep(1);
+    } finally {
+      extractionInProgressRef.current = false;
     }
-
-    // Transition to Review step with extracted questions
-    setDraftQuestions(accumulatedDrafts);
-    setCurrentStep(3);
   };
 
   // Modify draft question field in Review screen
@@ -691,6 +716,21 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
           {/* STEP 3: REVIEW & CONFIRM STEP (CRITICAL — do not auto-publish) */}
           {currentStep === 3 && (
             <div className="space-y-6">
+              {validationError && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start space-x-2.5 text-xs text-amber-800">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 font-medium">{validationError}</div>
+                  <button
+                    type="button"
+                    onClick={() => setValidationError(null)}
+                    className="text-amber-500 hover:text-amber-700 cursor-pointer"
+                    aria-label="Đóng thông báo"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Review Banner */}
               <div className="p-4 bg-blue-50/80 rounded-xl border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -1106,7 +1146,9 @@ export const UploadExerciseModal: React.FC<UploadExerciseModalProps> = ({
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5 cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
-                <span>Bắt đầu trích xuất AI ({filesList.length} file)</span>
+                <span>
+                  {validationError ? 'Thử lại trích xuất' : `Bắt đầu trích xuất AI (${filesList.length} file)`}
+                </span>
               </button>
             )}
 

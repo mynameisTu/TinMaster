@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   UserProfile,
-  UserRole,
   StudentMastery,
   ExamSession,
   Question,
@@ -22,8 +21,7 @@ import {
   ExamAttemptRecord,
   ClassStudentExamResult,
   INITIAL_EXAMS_CATALOG,
-  INITIAL_STUDENT_EXAM_HISTORY,
-  INITIAL_CLASS_EXAM_RESULTS,
+  loadStoredExamHistory,
 } from './data/examCatalogData';
 
 import { Header } from './components/Header';
@@ -32,7 +30,6 @@ import { ExamSimulation } from './components/ExamSimulation';
 import { ExamReview } from './components/ExamReview';
 import { KnowledgeMap } from './components/KnowledgeMap';
 import { TeacherDashboard } from './components/TeacherDashboard';
-import { AdminResearchDashboard } from './components/AdminResearchDashboard';
 import { AIVideoLessonModal } from './components/AIVideoLessonModal';
 import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
 import { AdaptivePracticeSession } from './components/AdaptivePracticeSession';
@@ -40,6 +37,13 @@ import { PracticeBankView } from './components/PracticeBankView';
 import { GoogleSignInModal } from './components/GoogleSignInModal';
 import { ExamsCatalogView } from './components/ExamsCatalogView';
 import { SelectTrackModal } from './components/SelectTrackModal';
+import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { TeacherInvitationModal } from './components/TeacherInvitationModal';
+import { AuthenticationRoute } from './components/AuthPages';
+import { MemberDirectory } from './components/MemberDirectory';
+import { AccountSettingsPage, PublicMemberProfilePage } from './components/MemberPages';
+import { supabase } from './services/supabaseClient';
+import { createAvatarUrl, getMyMemberProfile, type MemberProfile } from './services/memberService';
 
 import {
   Play,
@@ -52,29 +56,55 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 
-const STORAGE_KEY_USER = 'tinmaster_user_profile_v1';
 const STORAGE_KEY_MASTERIES = 'tinmaster_masteries_v1';
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
+  );
+}
+
+function AppRoutes() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (['/admin', '/admin/dashboard', '/admin/setup-password', '/register', '/forgot-password', '/reset-password'].includes(path)) {
+    return <AuthenticationRoute />;
+  }
+  return <TinMasterApp />;
+}
+
+function pageFromLocation(): { tab: string; username: string | null } {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (path === '/members') return { tab: 'member_directory', username: null };
+  if (path.startsWith('/members/')) {
+    return { tab: 'public_profile', username: decodeURIComponent(path.slice('/members/'.length)) };
+  }
+  if (path === '/settings') return { tab: 'account_settings', username: null };
+  return { tab: 'dashboard', username: null };
+}
+
+function TinMasterApp() {
+  const auth = useAuth();
+  const initialPage = pageFromLocation();
+  const [activeTab, setActiveTab] = useState<string>(initialPage.tab);
+  const [profileTarget, setProfileTarget] = useState<string | null>(initialPage.username);
+  const [memberProfile, setMemberProfile] = useState<MemberProfile | null>(null);
+  const [memberAvatarUrl, setMemberAvatarUrl] = useState<string | null>(null);
+
   // 1. User State
-  const [user, setUser] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_USER);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return {
-      id: 'usr_student_01',
-      name: 'Ngoc Tu',
-      email: 'ngoctu@gmail.com',
-      role: 'student',
-      targetScore: 8.5,
-      estimatedScore: 7.4,
-      completedQuestionsCount: 38,
-      streakDays: 6,
-      xp: 450,
-      researchGroup: 'adaptive',
-      totalStudyMinutes: 120,
-    };
+  const [userState, setUser] = useState<UserProfile>({
+    id: '',
+    name: '',
+    email: '',
+    role: 'student',
+    targetScore: 8.5,
+    estimatedScore: 0,
+    completedQuestionsCount: 0,
+    streakDays: 0,
+    xp: 0,
+    researchGroup: 'unassigned',
+    totalStudyMinutes: 0,
   });
 
   // 2. Knowledge Mastery State (Bayesian Knowledge Tracing)
@@ -142,12 +172,11 @@ export default function App() {
   };
 
   // 3. Navigation & Modals
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [currentExamSession, setCurrentExamSession] = useState<ExamSession | null>(null);
   const [showVideoModal, setShowVideoModal] = useState<boolean>(false);
   const [videoConceptId, setVideoConceptId] = useState<string | undefined>(undefined);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState<boolean>(false);
-  const [showGoogleSignInModal, setShowGoogleSignInModal] = useState<boolean>(false);
+  const [showTeacherInvitationModal, setShowTeacherInvitationModal] = useState(false);
   const [showSelectTrackModal, setShowSelectTrackModal] = useState<boolean>(false);
   const [pendingExamStart, setPendingExamStart] = useState<{ blueprint: ExamBlueprint; examItem?: ExamCatalogItem } | null>(null);
   const [practiceQuestions, setPracticeQuestions] = useState<Question[] | null>(null);
@@ -161,14 +190,12 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  const handleGoogleSignIn = (email: string, name: string) => {
-    setUser((prev) => ({
-      ...prev,
-      email,
-      name,
-    }));
-    showToast(`Đã đồng bộ tài khoản Gmail: ${email}`);
-  };
+  useEffect(() => {
+    if (auth.status !== 'authenticated' || !auth.error) return;
+    setToastMessage(`Lỗi xác thực: ${auth.error}`);
+    const timeout = window.setTimeout(() => setToastMessage(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [auth.error, auth.status]);
 
   // Exam Catalog, History, and Session States
   const [examsCatalog, setExamsCatalog] = useState<ExamCatalogItem[]>(() => {
@@ -184,27 +211,86 @@ export default function App() {
     return INITIAL_EXAMS_CATALOG;
   });
 
-  const [examHistory, setExamHistory] = useState<ExamAttemptRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('tinmaster_student_exam_history_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return INITIAL_STUDENT_EXAM_HISTORY;
-  });
+  const [examHistory, setExamHistory] = useState<ExamAttemptRecord[]>(() =>
+    loadStoredExamHistory(localStorage)
+  );
 
-  const [classResults, setClassResults] = useState<ClassStudentExamResult[]>(INITIAL_CLASS_EXAM_RESULTS);
+  const [classResults] = useState<ClassStudentExamResult[]>([]);
   const [activeExamBlueprint, setActiveExamBlueprint] = useState<ExamBlueprint>(OFFICIAL_EXAM_BLUEPRINT_2025);
   const [currentExamItem, setCurrentExamItem] = useState<ExamCatalogItem | undefined>(undefined);
 
-  // Persist state changes
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    } catch {}
-  }, [user]);
+    if (auth.status !== 'authenticated' || !supabase) {
+      setMemberProfile(null);
+      setMemberAvatarUrl(null);
+      return;
+    }
+
+    const client = supabase;
+    let active = true;
+    void getMyMemberProfile(client)
+      .then(async (profile) => {
+        const avatarUrl = await createAvatarUrl(client, profile.avatarPath);
+        if (active) {
+          setMemberProfile(profile);
+          setMemberAvatarUrl(avatarUrl);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMemberProfile(null);
+          setMemberAvatarUrl(null);
+        }
+      });
+    return () => { active = false; };
+  }, [auth.status, auth.profile?.id, auth.profile?.displayName]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const page = pageFromLocation();
+      setActiveTab(page.tab);
+      setProfileTarget(page.username);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (tab: string, username?: string | null) => {
+    setActiveTab(tab);
+    setProfileTarget(username ?? null);
+    const path = tab === 'member_directory'
+      ? '/members'
+      : tab === 'account_settings'
+        ? '/settings'
+        : tab === 'public_profile' && username
+          ? `/members/${encodeURIComponent(username)}`
+          : '/';
+    window.history.pushState({}, '', path);
+  };
+
+  const handleMemberProfileSaved = (profile: MemberProfile) => {
+    setMemberProfile(profile);
+    if (supabase) {
+      void createAvatarUrl(supabase, profile.avatarPath)
+        .then(setMemberAvatarUrl)
+        .catch(() => setMemberAvatarUrl(null));
+    }
+  };
+
+  const user: UserProfile = auth.profile
+    ? {
+      ...userState,
+      id: auth.profile.id,
+      name: memberProfile?.displayName ?? auth.profile.displayName,
+      email: auth.profile.email,
+      role: auth.profile.role,
+      avatarUrl: memberAvatarUrl ?? auth.profile.avatarUrl,
+      school: auth.profile.school,
+      grade: auth.profile.grade,
+      examTrack: memberProfile ? memberProfile.examTrack : auth.profile.examTrack ?? userState.examTrack,
+      targetScore: auth.profile.targetScore,
+    }
+    : userState;
 
   useEffect(() => {
     try {
@@ -222,14 +308,6 @@ export default function App() {
   const learningPath: LearningPathDay[] = AdaptiveLearningEngine.generate7DayLearningPath(
     masteries
   );
-
-  // Role switch handler
-  const handleRoleChange = (role: UserRole) => {
-    setUser((prev) => ({ ...prev, role }));
-    if (role === 'teacher') setActiveTab('teacher_view');
-    else if (role === 'admin') setActiveTab('research_admin');
-    else setActiveTab('dashboard');
-  };
 
   // Assemble exam questions filtered by track for elective exams
   const assembleExamQuestions = (blueprint: ExamBlueprint, examItem?: ExamCatalogItem, track?: ExamTrack): Question[] => {
@@ -559,16 +637,57 @@ export default function App() {
     setShowVideoModal(true);
   };
 
+  if (auth.status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f8f9fa] text-sm text-slate-600">
+        Đang khôi phục phiên đăng nhập…
+      </div>
+    );
+  }
+
+  if (auth.status !== 'authenticated' || !auth.profile) {
+    return (
+      <GoogleSignInModal
+        isOpen
+        onSignIn={auth.signInWithGoogle}
+        isLoading={false}
+        error={auth.error}
+        errorKind={auth.errorKind}
+        onRetryProfileLoad={auth.retryProfileLoad}
+        onSignOut={auth.signOut}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f8f9fa] text-[#1e293b] flex flex-col font-sans">
       {/* 1. APP HEADER */}
       <Header
         user={user}
-        onRoleChange={handleRoleChange}
+        memberUsername={memberProfile?.username ?? undefined}
+        memberAvatarUrl={memberAvatarUrl}
+        onSignOut={() => void auth.signOut()}
+        onRedeemTeacherInvitation={() => setShowTeacherInvitationModal(true)}
         activeTab={activeTab}
-        onTabChange={(tab) => setActiveTab(tab)}
+        onTabChange={(tab) => {
+          if (tab === 'member_directory') navigateTo('member_directory');
+          else if (tab === 'account_settings') navigateTo('account_settings');
+          else if (tab === 'public_profile') {
+            if (memberProfile?.username) navigateTo('public_profile', memberProfile.username);
+            else navigateTo('account_settings');
+          } else {
+            setActiveTab(tab);
+            if (['dashboard', 'adaptive_practice', 'exam_list', 'knowledge_map', 'teacher_view'].includes(tab)) {
+              window.history.pushState({}, '', '/');
+            }
+          }
+        }}
+        onOpenOwnProfile={() => {
+          if (memberProfile?.username) navigateTo('public_profile', memberProfile.username);
+          else navigateTo('account_settings');
+        }}
+        onOpenAccountSettings={() => navigateTo('account_settings')}
         onOpenVideoModal={() => handleOpenVideoModal()}
-        onOpenGoogleSignIn={() => setShowGoogleSignInModal(true)}
         onOpenGoogleWorkspace={() => setShowWorkspaceModal(true)}
         onOpenTrackModal={() => setShowSelectTrackModal(true)}
         onSelectTrack={handleTrackSelected}
@@ -668,15 +787,36 @@ export default function App() {
         )}
 
         {/* VIEW F: TEACHER DASHBOARD */}
-        {activeTab === 'teacher_view' && (
+        {activeTab === 'teacher_view' && (user.role === 'teacher' || user.role === 'admin') && (
           <TeacherDashboard
             onOpenVideoModal={() => handleOpenVideoModal()}
             onOpenGoogleWorkspace={() => setShowWorkspaceModal(true)}
           />
         )}
 
-        {/* VIEW G: ADMIN & SCIENTIFIC RESEARCH DASHBOARD */}
-        {activeTab === 'research_admin' && <AdminResearchDashboard />}
+        {activeTab === 'member_directory' && (
+          <MemberDirectory
+            onOpenMember={(username) => navigateTo('public_profile', username)}
+          />
+        )}
+
+        {activeTab === 'public_profile' && (
+          <PublicMemberProfilePage
+            username={profileTarget ?? memberProfile?.username ?? ''}
+            ownProfile={memberProfile}
+            onBack={() => navigateTo('member_directory')}
+            onOpenSettings={() => navigateTo('account_settings')}
+          />
+        )}
+
+        {activeTab === 'account_settings' && (
+          <AccountSettingsPage
+            email={auth.profile?.email ?? ''}
+            onBack={() => navigateTo('dashboard')}
+            onSaved={handleMemberProfileSaved}
+          />
+        )}
+
       </main>
 
       {/* 4. GOOGLE WORKSPACE FLOATING ACTION BAR */}
@@ -738,13 +878,12 @@ export default function App() {
         />
       )}
 
-      {/* Gmail Sign In Modal */}
-      <GoogleSignInModal
-        isOpen={showGoogleSignInModal}
-        onClose={() => setShowGoogleSignInModal(false)}
-        onSignIn={handleGoogleSignIn}
-        currentEmail={user.email}
-      />
+      {showTeacherInvitationModal && (
+        <TeacherInvitationModal
+          onClose={() => setShowTeacherInvitationModal(false)}
+          onRedeemed={auth.refreshProfile}
+        />
+      )}
 
       {/* Select Track Modal for Elective Exams */}
       <SelectTrackModal

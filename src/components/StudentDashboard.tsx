@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   UserProfile,
   StudentMastery,
@@ -8,8 +8,8 @@ import {
   ExamTrack,
 } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
+import { LEADERBOARD_EMPTY_STATE } from '../data/leaderboard';
 import { SAMPLE_QUESTION_BANK } from '../data/questionBank';
-import { TOP_LEADERBOARD_USERS } from '../data/leaderboardData';
 import {
   Play,
   RotateCcw,
@@ -24,6 +24,8 @@ import {
   Code2,
   Globe,
 } from 'lucide-react';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { ClassroomStudentSection } from './ClassroomStudentSection';
 
 interface StudentDashboardProps {
   user: UserProfile;
@@ -38,6 +40,7 @@ interface StudentDashboardProps {
   onOpenVideoModal: (conceptId?: string) => void;
   onNavigateToKnowledgeMap: () => void;
   onNavigateToExercises?: () => void;
+  client?: SupabaseClient | null;
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
@@ -53,6 +56,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onOpenVideoModal,
   onNavigateToKnowledgeMap,
   onNavigateToExercises,
+  client,
 }) => {
   // Tính điểm năng lực trung bình ước lượng (quy đổi thang 10)
   const masteryValues = Object.values(masteries);
@@ -73,47 +77,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   })
     .sort((a, b) => a.score - b.score)
     .slice(0, 3);
-
-  // Xếp hạng học sinh (Leaderboard) kết hợp điểm XP thực tế của người dùng hiện tại
-  const leaderboardData = useMemo(() => {
-    const list = [...TOP_LEADERBOARD_USERS];
-    const initials = (user.name || 'NT')
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase();
-
-    const currentUserEntry = {
-      id: user.id,
-      rank: 0,
-      name: user.name,
-      school: 'THPT của bạn',
-      avatarText: initials || 'HS',
-      avatarColor: 'bg-blue-100 text-blue-800 border-blue-300',
-      xp: user.xp,
-      streakDays: user.streakDays,
-      accuracyPercent: 84,
-      isCurrentUser: true,
-    };
-
-    const combined = [...list, currentUserEntry].sort((a, b) => b.xp - a.xp);
-    const ranked = combined.map((entry, idx) => ({
-      ...entry,
-      rank: idx + 1,
-    }));
-
-    const currentRank = ranked.find((r) => r.isCurrentUser)?.rank || 8;
-    const topFive = ranked.slice(0, 5);
-    const isUserInTopFive = topFive.some((r) => r.isCurrentUser);
-
-    return {
-      topFive,
-      userRank: currentRank,
-      isUserInTopFive,
-      currentUserEntry: { ...currentUserEntry, rank: currentRank },
-    };
-  }, [user.id, user.name, user.xp, user.streakDays]);
 
   // Danh sách bài tập mới nhất từ ngân hàng đề mẫu
   const recentExercises: {
@@ -237,6 +200,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] 2xl:grid-cols-[1fr_420px] lg:grid-cols-[1fr_350px] gap-6 sm:gap-7">
         {/* LEFT COLUMN: TABLES & CORE WORKFLOW */}
         <div className="space-y-6">
+          {/* Lớp học của học sinh (Classroom Student Section) */}
+          <ClassroomStudentSection client={client} />
+
           {/* Card 1: Nhiệm vụ luyện tập hôm nay */}
           <div className="panel">
             <div className="flex items-center justify-between pb-3.5 mb-3.5 border-b border-slate-200">
@@ -539,115 +505,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           </div>
 
-          {/* Card 2: Bảng Xếp Hạng Tuần */}
+          {/* Card 2: Bảng xếp hạng */}
           <div className="panel">
             <div className="flex items-center justify-between pb-3.5 mb-3.5 border-b border-slate-200">
               <div className="flex items-center space-x-2">
                 <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
-                <h2 className="text-[15px] font-semibold text-slate-900">Bảng xếp hạng tuần</h2>
+                <h2 className="text-[15px] font-semibold text-slate-900">Bảng vàng</h2>
               </div>
-              <span className="font-mono text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                Tuần 38
-              </span>
             </div>
-
-            <p className="text-[13px] text-slate-500 mb-3.5">
-              Học sinh tích cực ôn luyện và dẫn đầu điểm kinh nghiệm.
-            </p>
-
-            <div className="space-y-2">
-              {leaderboardData.topFive.map((student) => {
-                const isUser = student.isCurrentUser;
-                const rankBadgeClass =
-                  student.rank === 1
-                    ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
-                    : student.rank === 2
-                    ? 'bg-slate-200 text-slate-800 border-slate-300 font-semibold'
-                    : student.rank === 3
-                    ? 'bg-amber-50 text-amber-900 border-amber-200 font-semibold'
-                    : 'bg-slate-100 text-slate-600 border-slate-200 font-normal';
-
-                return (
-                  <div
-                    key={student.id}
-                    className={`p-2 rounded-lg border transition flex items-center justify-between gap-2 ${
-                      isUser
-                        ? 'bg-slate-100/80 border-slate-300 ring-1 ring-slate-300 shadow-2xs'
-                        : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2.5 min-w-0">
-                      <span
-                        className={`w-5 h-5 rounded flex items-center justify-center font-mono text-[11px] shrink-0 border ${rankBadgeClass}`}
-                      >
-                        {student.rank}
-                      </span>
-                      <div
-                        className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 border ${student.avatarColor}`}
-                      >
-                        {student.avatarText}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-medium text-xs text-slate-900 truncate flex items-center gap-1.5">
-                          <span className="truncate">{student.name}</span>
-                          {isUser && (
-                            <span className="px-1.5 py-0.2 bg-slate-800 text-white text-[9px] font-semibold rounded shrink-0">
-                              Bạn
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-500 truncate" title={student.school}>
-                          {student.school}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="font-mono font-semibold text-xs text-slate-800">
-                        {student.xp.toLocaleString()} XP
-                      </span>
-                      <div className="text-[10px] text-slate-400">
-                        Chuỗi {student.streakDays}n
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex min-h-28 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 text-center">
+              <p className="text-sm text-slate-500">{LEADERBOARD_EMPTY_STATE}</p>
             </div>
-
-            {/* If user is not in top 5, show their rank separately below */}
-            {!leaderboardData.isUserInTopFive && (
-              <div className="pt-3 mt-3 border-t border-slate-200">
-                <div className="p-2 bg-slate-100/80 border border-slate-300 rounded-lg flex items-center justify-between ring-1 ring-slate-300 shadow-2xs">
-                  <div className="flex items-center space-x-2.5 min-w-0">
-                    <span className="font-mono font-bold text-xs text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 shrink-0">
-                      #{leaderboardData.userRank}
-                    </span>
-                    <div className="w-7 h-7 rounded-full bg-slate-800 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                      {leaderboardData.currentUserEntry.avatarText}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-xs text-slate-900 flex items-center gap-1.5">
-                        <span className="truncate">{user.name}</span>
-                        <span className="px-1.5 py-0.2 bg-slate-800 text-white text-[9px] font-bold rounded">
-                          Bạn
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        Bạn đang xếp hạng #{leaderboardData.userRank}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="font-mono font-bold text-xs text-slate-800">
-                      {user.xp.toLocaleString()} XP
-                    </span>
-                    <div className="text-[10px] text-emerald-700 font-medium">
-                      +15 XP mỗi câu
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Card 3: Thông báo */}
@@ -716,4 +584,3 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     </div>
   );
 };
-

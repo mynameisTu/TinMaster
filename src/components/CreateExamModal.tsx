@@ -12,6 +12,10 @@ import {
 } from '../types';
 import { SAMPLE_QUESTION_BANK } from '../data/questionBank';
 import {
+  ExerciseExtractionError,
+  extractQuestionsFromFile,
+} from '../services/exerciseService';
+import {
   PlusCircle,
   X,
   Clock,
@@ -96,6 +100,7 @@ export const CreateExamModal: React.FC<CreateExamModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const keyInputRef = useRef<HTMLInputElement>(null);
+  const extractionInProgressRef = useRef(false);
 
   // General Form Error
   const [formError, setFormError] = useState<string | null>(null);
@@ -186,11 +191,13 @@ export const CreateExamModal: React.FC<CreateExamModalProps> = ({
 
   // Run AI & OCR Extraction for Option B
   const handleStartExtraction = async () => {
+    if (extractionInProgressRef.current || uploadStep === 'extracting') return;
     if (!mainQuestionFile) {
       setExtractError('Vui lòng chọn tệp tin đề thi (.docx, .pdf, hoặc hình ảnh) trước.');
       return;
     }
 
+    extractionInProgressRef.current = true;
     setExtractError(null);
     setUploadStep('extracting');
 
@@ -209,106 +216,35 @@ export const CreateExamModal: React.FC<CreateExamModalProps> = ({
         } catch {}
       }
 
-      const response = await fetch('/api/exercises/extract-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file: {
-            name: mainQuestionFile.name,
-            mimeType: mainQuestionFile.type,
-            base64: base64Data,
-          },
-          answerKeyFile: answerKeyPayload,
-        }),
-      });
-
-      const data = await response.json();
+      const data = await extractQuestionsFromFile(
+        {
+          name: mainQuestionFile.name,
+          mimeType: mainQuestionFile.type,
+          base64: base64Data,
+        },
+        answerKeyPayload
+      );
 
       if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
         setUploadedQuestions(data.questions);
         setUploadStep('review');
         setIsReviewedConfirmed(false);
       } else {
-        // Fallback: Generate structured realistic questions tailored to file name and target grade
-        const simulated: Question[] = generateRealisticExamQuestions(
-          mainQuestionFile.name,
-          targetGrade === 'all' ? 12 : targetGrade
-        );
-        setUploadedQuestions(simulated);
-        setUploadStep('review');
-        setIsReviewedConfirmed(false);
+        setUploadedQuestions([]);
+        setExtractError(data.error || 'Không tìm thấy câu hỏi hợp lệ trong tài liệu.');
+        setUploadStep('upload');
       }
-    } catch (err: any) {
-      // Offline/parsing fallback
-      const simulated: Question[] = generateRealisticExamQuestions(
-        mainQuestionFile.name,
-        targetGrade === 'all' ? 12 : targetGrade
+    } catch (err: unknown) {
+      setUploadedQuestions([]);
+      setExtractError(
+        err instanceof ExerciseExtractionError
+          ? err.message
+          : 'Không thể đọc tệp đã chọn. Tệp vẫn được giữ lại; vui lòng thử lại.'
       );
-      setUploadedQuestions(simulated);
-      setUploadStep('review');
-      setIsReviewedConfirmed(false);
+      setUploadStep('upload');
+    } finally {
+      extractionInProgressRef.current = false;
     }
-  };
-
-  // Fallback realistic question set generator
-  const generateRealisticExamQuestions = (fileName: string, grade: number): Question[] => {
-    const questions: Question[] = [];
-    // 16 Part I Single choice questions
-    for (let i = 1; i <= 16; i++) {
-      questions.push({
-        id: `Q_CUSTOM_${Date.now()}_P1_${i}`,
-        questionType: 'single_choice',
-        stem: `[Câu ${i} - ${fileName}] Trong chương trình Tin học lớp ${grade}, phát biểu nào sau đây thể hiện đúng quy chuẩn kỹ thuật và thuật toán ứng dụng?`,
-        conceptId: 'CS12_AI_CONCEPTS',
-        topicId: 'AI_FUNDAMENTALS',
-        grade: grade as any,
-        strand: 'CS',
-        cognitiveLevel: i <= 6 ? 'knowledge' : i <= 12 ? 'comprehension' : 'application',
-        difficulty: i <= 8 ? 'easy' : i <= 13 ? 'medium' : 'hard',
-        estimatedTimeSec: 60,
-        competencyCode: 'NLa',
-        singleChoiceOptions: [
-          { label: 'A', text: `Phương án kỹ thuật A: Định nghĩa và mô hình hóa dữ liệu theo chuẩn GDPT 2018.`, isCorrect: i % 4 === 1 },
-          { label: 'B', text: `Phương án kỹ thuật B: Tối ưu hóa giải thuật và kiểm soát dữ liệu đầu vào.`, isCorrect: i % 4 === 2 },
-          { label: 'C', text: `Phương án kỹ thuật C: Thiết lập cấu trúc cơ sở dữ liệu quan hệ bảo mật cao.`, isCorrect: i % 4 === 3 },
-          { label: 'D', text: `Phương án kỹ thuật D: Truy vấn và xử lý các ngoại lệ trong môi trường số.`, isCorrect: i % 4 === 0 },
-        ],
-        explanation: `Lời giải trích xuất từ đề thi: Phương án đúng theo chuẩn kiến thức sách giáo khoa Tin học lớp ${grade}.`,
-        keyTakeaway: `Ghi nhớ chuẩn kiến thức trọng tâm lớp ${grade} GDPT 2018.`,
-        source: fileName,
-        sourceYear: 2025,
-        isVerified: true,
-      });
-    }
-
-    // 4 Part II True/False questions (4 sub-items each)
-    for (let j = 1; j <= 4; j++) {
-      questions.push({
-        id: `Q_CUSTOM_${Date.now()}_P2_${j}`,
-        questionType: 'true_false_multistatement',
-        stem: `[Câu ${16 + j} - Đúng/Sai] Một cơ quan nghiên cứu triển khai hệ thống thông tin phục vụ quản lý cơ sở dữ liệu và bảo mật dữ liệu số. Xét tính Đúng / Sai của các khẳng định sau:`,
-        conceptId: 'CS11_DB_RELATIONAL',
-        topicId: 'RELATIONAL_DATABASE',
-        grade: grade as any,
-        strand: 'CS',
-        cognitiveLevel: 'high_application',
-        difficulty: 'medium',
-        estimatedTimeSec: 120,
-        competencyCode: 'NLc',
-        trueFalseStatements: [
-          { subOrder: 'a', statementText: 'Mô hình cơ sở dữ liệu quan hệ yêu cầu mỗi bảng phải có ít nhất một khóa chính không chứa giá trị NULL.', isCorrect: true, explanation: 'Đúng theo quy tắc toàn vẹn thực thể.' },
-          { subOrder: 'b', statementText: 'Khóa ngoại bắt buộc phải tham chiếu đến một trường có kiểu dữ liệu khác với khóa chính.', isCorrect: false, explanation: 'Sai, kiểu dữ liệu của khóa ngoại phải tương thích với khóa chính tham chiếu.' },
-          { subOrder: 'c', statementText: 'Việc lập chỉ mục (Index) trên các trường thường xuyên tìm kiếm giúp tăng tốc độ truy vấn SELECT.', isCorrect: true, explanation: 'Đúng, index giúp tối ưu hóa tra cứu B-tree.' },
-          { subOrder: 'd', statementText: 'Có thể xóa một bản ghi trong bảng cha khi bản ghi đó đang được tham chiếu bởi các bản ghi con mà không cần kích hoạt CASCADE.', isCorrect: false, explanation: 'Sai, hệ quản trị RDBMS sẽ báo lỗi vi phạm toàn vẹn tham chiếu.' },
-        ],
-        explanation: 'Phần II đánh giá năng lực phân tích logic và hiểu biết sâu sắc về RDBMS và hệ thống thông tin.',
-        keyTakeaway: 'Nắm vững quy tắc toàn vẹn thực thể và toàn vẹn tham chiếu trong cơ sở dữ liệu quan hệ.',
-        source: fileName,
-        sourceYear: 2025,
-        isVerified: true,
-      });
-    }
-    return questions;
   };
 
   // Option B Question Editing
@@ -1128,7 +1064,7 @@ export const CreateExamModal: React.FC<CreateExamModalProps> = ({
                       className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center space-x-2 shadow-xs"
                     >
                       <Sparkles className="w-4 h-4" />
-                      <span>Trích Xuất Câu Hỏi Bằng AI & OCR</span>
+                      <span>{extractError ? 'Thử lại trích xuất' : 'Trích Xuất Câu Hỏi Bằng AI & OCR'}</span>
                     </button>
                   </div>
                 </div>

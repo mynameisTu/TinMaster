@@ -4,6 +4,7 @@
  */
 
 import { Question, VideoLessonScript } from '../types';
+import { authenticatedFetch } from './apiClient';
 
 export class AIPedagogicalService {
   /**
@@ -21,7 +22,7 @@ export class AIPedagogicalService {
     isAiGenerated: boolean;
   }> {
     try {
-      const res = await fetch('/api/ai/explain', {
+      const res = await authenticatedFetch('/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -67,7 +68,7 @@ export class AIPedagogicalService {
     topicName: string
   ): Promise<VideoLessonScript> {
     try {
-      const res = await fetch('/api/ai/video-script', {
+      const res = await authenticatedFetch('/api/ai/video-script', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conceptId, conceptName, topicName }),
