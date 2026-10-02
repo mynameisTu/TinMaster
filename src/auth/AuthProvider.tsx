@@ -15,6 +15,7 @@ import {
   recoverSession,
   signInWithGoogle as startGoogleSignIn,
   signOutUser,
+  updateMyTargetScore,
   type AuthProfile,
 } from '../services/authService';
 import { supabase, supabaseConfigurationError } from '../services/supabaseClient';
@@ -34,6 +35,7 @@ interface AuthContextValue {
   passwordRecoveryReady: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  updateTargetScore: (targetScore: number) => Promise<void>;
   refreshProfile: () => Promise<void>;
   retryProfileLoad: () => Promise<void>;
 }
@@ -142,6 +144,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [syncSession]);
 
+  const updateTargetScore = useCallback(async (targetScore: number) => {
+    if (!supabase || !state.profile || !state.session) {
+      throw new Error('Đăng nhập để thay đổi điểm mục tiêu.');
+    }
+    const userId = state.profile.id;
+    const requestGeneration = state.generation;
+    const savedScore = await updateMyTargetScore(supabase, targetScore);
+    dispatch({
+      type: 'target_score_updated',
+      userId,
+      targetScore: savedScore,
+      generation: requestGeneration,
+    });
+  }, [state.profile, state.session, state.generation]);
+
   const refreshProfile = useCallback(async () => {
     if (!supabase || !state.session) return;
     const requestGeneration = ++generation.current;
@@ -178,10 +195,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       passwordRecoveryReady: state.passwordRecoveryReady,
       signInWithGoogle,
       signOut,
+      updateTargetScore,
       refreshProfile,
       retryProfileLoad,
     }),
-    [state, signInWithGoogle, signOut, refreshProfile, retryProfileLoad]
+    [state, signInWithGoogle, signOut, updateTargetScore, refreshProfile, retryProfileLoad]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

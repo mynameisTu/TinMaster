@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Question,
   AdaptiveRecommendation,
+  AdaptivePracticeResult,
   QuestionAttemptTelemetry,
 } from '../types';
 import { AdaptiveLearningEngine } from '../services/adaptiveEngine';
@@ -21,12 +22,22 @@ import {
 interface AdaptivePracticeSessionProps {
   questions: Question[];
   initialRecommendation?: AdaptiveRecommendation;
-  onFinishPractice: (results: {
-    question: Question;
-    isCorrect: boolean;
-    activeTimeSec: number;
-  }[]) => void;
+  onFinishPractice: (results: AdaptivePracticeResult[]) => void;
   onClose: () => void;
+}
+
+export function createAdaptivePracticeResult(
+  question: Question,
+  userAnswer: string | Record<string, boolean>,
+  activeTimeSec: number
+): AdaptivePracticeResult {
+  const scoreResult = AdaptiveLearningEngine.calculateQuestionScore(question, userAnswer);
+  return {
+    question,
+    isCorrect: scoreResult.isCorrect,
+    scoreRatio: scoreResult.scoreRatio,
+    activeTimeSec: Math.max(5, activeTimeSec),
+  };
 }
 
 export const AdaptivePracticeSession: React.FC<AdaptivePracticeSessionProps> = ({
@@ -38,9 +49,7 @@ export const AdaptivePracticeSession: React.FC<AdaptivePracticeSessionProps> = (
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [selectedAnswer, setSelectedAnswer] = useState<any>(null);
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
-  const [accumulatedResults, setAccumulatedResults] = useState<
-    { question: Question; isCorrect: boolean; activeTimeSec: number }[]
-  >([]);
+  const [accumulatedResults, setAccumulatedResults] = useState<AdaptivePracticeResult[]>([]);
 
   const [aiAnalysis, setAiAnalysis] = useState<any | null>(null);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -78,21 +87,16 @@ export const AdaptivePracticeSession: React.FC<AdaptivePracticeSessionProps> = (
     setIsSubmitted(true);
 
     const activeTime = Math.round((Date.now() - startTimeRef.current) / 1000);
-    const scoreResult = AdaptiveLearningEngine.calculateQuestionScore(
+    const newResult = createAdaptivePracticeResult(
       currentQuestion,
-      selectedAnswer
+      selectedAnswer,
+      activeTime
     );
-
-    const newResult = {
-      question: currentQuestion,
-      isCorrect: scoreResult.isCorrect,
-      activeTimeSec: Math.max(5, activeTime),
-    };
 
     setAccumulatedResults((prev) => [...prev, newResult]);
 
     // If incorrect or user hesitated, fetch pedagogical misconception
-    if (!scoreResult.isCorrect || activeTime > currentQuestion.estimatedTimeSec * 1.5) {
+    if (!newResult.isCorrect || activeTime > currentQuestion.estimatedTimeSec * 1.5) {
       setIsAiLoading(true);
       const concept = CONCEPTS_LIST.find((c) => c.id === currentQuestion.conceptId);
       const aiRes = await AIPedagogicalService.explainQuestion(

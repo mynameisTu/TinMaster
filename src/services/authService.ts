@@ -14,6 +14,18 @@ export interface AuthProfile {
   targetScore: number;
 }
 
+export function validateTargetScore(targetScore: number): string | null {
+  if (
+    !Number.isFinite(targetScore) ||
+    targetScore < 1 ||
+    targetScore > 10 ||
+    targetScore * 2 !== Math.trunc(targetScore * 2)
+  ) {
+    return 'Điểm mục tiêu phải từ 1.0 đến 10.0 và tăng theo bước 0.5.';
+  }
+  return null;
+}
+
 const PASSWORD_AUTH_MAX_AGE_SECONDS = 15 * 60;
 const PROFILE_COLUMNS =
   'id,email,display_name,avatar_url,role,school,grade,exam_track,target_score';
@@ -85,6 +97,29 @@ export async function getOrCreateProfile(
     examTrack: data.exam_track ?? null,
     targetScore: Number(data.target_score ?? 8.5),
   };
+}
+
+export async function updateMyTargetScore(
+  client: SupabaseClient,
+  targetScore: number
+): Promise<number> {
+  const validationError = validateTargetScore(targetScore);
+  if (validationError) throw new Error(validationError);
+
+  const { data, error } = await client.rpc('update_my_target_score', {
+    p_target_score: targetScore,
+  });
+  if (error) throw new Error('Không thể lưu điểm mục tiêu. Vui lòng thử lại.');
+
+  const savedScore = typeof data === 'number'
+    ? data
+    : Array.isArray(data) && typeof data[0] === 'number'
+      ? data[0]
+      : null;
+  if (savedScore !== targetScore) {
+    throw new Error('Không thể xác nhận điểm mục tiêu đã lưu.');
+  }
+  return savedScore;
 }
 
 export async function signInWithGoogle(client: SupabaseClient): Promise<void> {

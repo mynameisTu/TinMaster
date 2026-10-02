@@ -23,6 +23,7 @@ export type AuthStateAction =
     }
   | { type: 'session_restored'; session: Session | null; generation: number }
   | { type: 'profile_loaded'; profile: AuthProfile; generation: number }
+  | { type: 'target_score_updated'; userId: string; targetScore: number; generation: number }
   | { type: 'profile_failed'; message: string; generation: number }
   | { type: 'session_failed'; message: string; generation: number }
   | { type: 'operation_failed'; message: string }
@@ -72,6 +73,16 @@ export function authStateReducer(state: AuthState, action: AuthStateAction): Aut
         profile: action.profile,
         error: null,
         errorKind: null,
+      };
+    case 'target_score_updated':
+      if (
+        action.generation !== state.generation ||
+        state.session?.user.id !== action.userId ||
+        state.profile?.id !== action.userId
+      ) return state;
+      return {
+        ...state,
+        profile: { ...state.profile, targetScore: action.targetScore },
       };
     case 'profile_failed':
       if (action.generation !== state.generation || !state.session) return state;

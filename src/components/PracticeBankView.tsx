@@ -8,6 +8,7 @@ import {
   UserRole,
 } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
+import { getVerifiedMastery } from '../services/masteryStorage';
 import { UploadExerciseModal } from './UploadExerciseModal';
 import { ManualQuestionModal } from './ManualQuestionModal';
 import {
@@ -320,8 +321,8 @@ export const PracticeBankView: React.FC<PracticeBankViewProps> = ({
             <tbody className="divide-y divide-slate-100">
               {filteredQuestions.length > 0 ? (
                 filteredQuestions.map((q, idx) => {
-                  const mastery = masteries[q.conceptId]?.masteryScore ?? 0.5;
-                  const masteryPercent = Math.round(mastery * 100);
+                  const mastery = getVerifiedMastery(masteries, q.conceptId);
+                  const masteryPercent = mastery ? Math.round(mastery.masteryScore * 100) : null;
 
                   return (
                     <tr key={`${q.id}-${idx}`} className="hover:bg-slate-50/70 transition">
@@ -353,14 +354,16 @@ export const PracticeBankView: React.FC<PracticeBankViewProps> = ({
                             <span>Mức độ nắm vững:</span>
                             <span
                               className={
-                                masteryPercent >= 70
+                                masteryPercent === null
+                                  ? 'text-slate-400'
+                                  : masteryPercent >= 70
                                   ? 'status-stable'
                                   : masteryPercent >= 50
                                   ? 'status-caution'
                                   : 'status-gap'
                               }
                             >
-                              {masteryPercent}%
+                              {masteryPercent === null ? 'Chưa có dữ liệu' : `${masteryPercent}%`}
                             </span>
                           </span>
                         </div>

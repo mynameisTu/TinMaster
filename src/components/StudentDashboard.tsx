@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   UserProfile,
   StudentMastery,
@@ -8,6 +8,9 @@ import {
   ExamTrack,
 } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
+import { getVerifiedMastery } from '../services/masteryStorage';
+import type { LearningMode } from '../services/learningPreferences';
+import { validateTargetScore } from '../services/authService';
 import { LEADERBOARD_EMPTY_STATE } from '../data/leaderboard';
 import { SAMPLE_QUESTION_BANK } from '../data/questionBank';
 import {
@@ -32,6 +35,13 @@ interface StudentDashboardProps {
   masteries: Record<string, StudentMastery>;
   recommendations: AdaptiveRecommendation[];
   learningPath: LearningPathDay[];
+  learningMode: LearningMode;
+  learningModeReady: boolean;
+  learningModeCanPersist: boolean;
+  onChangeLearningMode: (mode: LearningMode) => Promise<void>;
+  onSaveTargetScore: (targetScore: number) => Promise<void>;
+  canEditTargetScore: boolean;
+  showStudentLearningControls: boolean;
   onStartExam: () => void;
   onSelectTrack?: (track: ExamTrack) => void;
   onOpenTrackModal?: () => void;
@@ -43,11 +53,29 @@ interface StudentDashboardProps {
   client?: SupabaseClient | null;
 }
 
+export function showTargetScoreDialog(
+  dialog: Pick<HTMLDialogElement, 'open' | 'showModal'> | null,
+  focusTarget: Pick<HTMLElement, 'focus'> | null,
+  setEditing: (editing: boolean) => void
+): void {
+  if (!dialog || dialog.open) return;
+  dialog.showModal();
+  focusTarget?.focus();
+  setEditing(true);
+}
+
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   user,
   masteries,
   recommendations,
   learningPath,
+  learningMode,
+  learningModeReady,
+  learningModeCanPersist,
+  onChangeLearningMode,
+  onSaveTargetScore,
+  canEditTargetScore,
+  showStudentLearningControls,
   onStartExam,
   onSelectTrack,
   onOpenTrackModal,
@@ -58,23 +86,92 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateToExercises,
   client,
 }) => {
-  // Tính điểm năng lực trung bình ước lượng (quy đổi thang 10)
-  const masteryValues = Object.values(masteries);
-  const avgMastery =
-    masteryValues.length > 0
-      ? masteryValues.reduce((acc, curr) => acc + curr.masteryScore, 0) / masteryValues.length
-      : 0.74;
-  const estimatedScore = Math.min(9.8, Math.max(4.0, Math.round(avgMastery * 100) / 10));
-  const progressPercent = Math.min(100, Math.round((estimatedScore / 10.0) * 100));
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [selectedTarget, setSelectedTarget] = useState(user.targetScore.toFixed(1));
+  const [targetSaving, setTargetSaving] = useState(false);
+  const [targetError, setTargetError] = useState<string | null>(null);
+  const [targetSuccess, setTargetSuccess] = useState<string | null>(null);
+  const [modeSaving, setModeSaving] = useState(false);
+  const [modeError, setModeError] = useState<string | null>(null);
+  const [modeSuccess, setModeSuccess] = useState<string | null>(null);
+  const hasValidTarget = validateTargetScore(user.targetScore) === null;
+  const targetDialogRef = useRef<HTMLDialogElement>(null);
+  const targetScoreSelectRef = useRef<HTMLSelectElement>(null);
+  const targetEditButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Xác định 3 điểm yếu nhất cần củng cố
+  useEffect(() => {
+    setSelectedTarget(
+      validateTargetScore(user.targetScore) === null
+        ? user.targetScore.toFixed(1)
+        : '1.0'
+    );
+    setEditingTarget(false);
+  }, [user.id, user.targetScore]);
+
+  useEffect(() => {
+    const dialog = targetDialogRef.current;
+    if (!dialog) return;
+    if (editingTarget && !dialog.open) {
+      dialog.showModal();
+      targetScoreSelectRef.current?.focus();
+    } else if (!editingTarget && dialog.open) {
+      dialog.close();
+      targetEditButtonRef.current?.focus();
+    }
+  }, [editingTarget]);
+
+  const cancelTargetEdit = () => {
+    setSelectedTarget(hasValidTarget ? user.targetScore.toFixed(1) : '1.0');
+    setEditingTarget(false);
+    setTargetError(null);
+  };
+
+  const handleSaveTarget = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const targetScore = Number(selectedTarget);
+    const validationError = validateTargetScore(targetScore);
+    if (validationError) {
+      setTargetError(validationError);
+      return;
+    }
+    setTargetSaving(true);
+    setTargetError(null);
+    setTargetSuccess(null);
+    try {
+      await onSaveTargetScore(targetScore);
+      setEditingTarget(false);
+      setTargetSuccess('Đã lưu mục tiêu điểm thi.');
+    } catch (error) {
+      setTargetError(error instanceof Error ? error.message : 'Không thể lưu mục tiêu điểm thi.');
+    } finally {
+      setTargetSaving(false);
+    }
+  };
+
+  const handleLearningModeChange = async (mode: LearningMode) => {
+    setModeSaving(true);
+    setModeError(null);
+    setModeSuccess(null);
+    try {
+      await onChangeLearningMode(mode);
+      setModeSuccess('Đã lưu phương pháp học cho tài khoản này.');
+    } catch (error) {
+      setModeError(error instanceof Error ? error.message : 'Không thể lưu phương pháp học.');
+    } finally {
+      setModeSaving(false);
+    }
+  };
+
+  // Only recorded attempts can identify areas to reinforce.
   const weakConcepts = CONCEPTS_LIST.map((concept) => {
-    const score = masteries[concept.id]?.masteryScore ?? 0.5;
+    const mastery = getVerifiedMastery(masteries, concept.id);
+    if (!mastery) return null;
     return {
       concept,
-      score: Math.round(score * 100),
+      score: Math.round(mastery.masteryScore * 100),
     };
   })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
     .sort((a, b) => a.score - b.score)
     .slice(0, 3);
 
@@ -348,7 +445,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 question: ex.question,
                                 score: 0.85,
                                 reasons: {
-                                  weaknessScore: 0.8,
+                                  weaknessScore: 0.5,
                                   recencyScore: 0.6,
                                   difficultyFitScore: 0.9,
                                   importanceScore: 0.7,
@@ -446,52 +543,57 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-xs text-slate-500 font-medium">Kỳ thi THPT</span>
             </div>
 
+            {/* Do not infer an exam score from uncalibrated concept-mastery values. */}
             <div className="space-y-3.5 text-[13.5px]">
               <div className="flex justify-between items-baseline">
-                <span className="text-slate-600 font-medium">Năng lực ước lượng:</span>
+                <span className="text-slate-600 font-medium">Dự đoán điểm thi:</span>
                 <span className="font-mono text-base font-bold text-slate-900">
-                  {estimatedScore.toFixed(1)} <span className="text-xs font-normal text-slate-400">/ 10.0</span>
+                  Chưa có mô hình dự đoán được kiểm chứng
                 </span>
               </div>
-              <div className="flex justify-between items-baseline">
-                <span className="text-slate-600 font-medium">Mục tiêu điểm số:</span>
-                <span className="font-mono text-base font-bold text-slate-900">
-                  {user.targetScore.toFixed(1)}
-                </span>
-              </div>
-
-              {/* Progress bar towards target */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs text-slate-500">
-                  <span>Tiến độ đạt mục tiêu</span>
-                  <span className="font-mono font-medium">{progressPercent}%</span>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-600 font-medium">Mục tiêu điểm thi:</span>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span className="font-mono text-lg font-bold text-slate-900">
+                      {hasValidTarget ? `${user.targetScore.toFixed(1)} / 10` : 'Chưa chọn'}
+                    </span>
+                    {canEditTargetScore && (
+                      <button
+                        ref={targetEditButtonRef}
+                        type="button"
+                        aria-haspopup="dialog"
+                        aria-expanded={editingTarget}
+                        aria-controls="target-score-dialog"
+                        onClick={() => {
+                          setSelectedTarget(hasValidTarget ? user.targetScore.toFixed(1) : '1.0');
+                          setTargetError(null);
+                          setTargetSuccess(null);
+                          showTargetScoreDialog(
+                            targetDialogRef.current,
+                            targetScoreSelectRef.current,
+                            setEditingTarget
+                          );
+                        }}
+                        className="btn-secondary text-xs py-1.5 px-3 cursor-pointer"
+                      >
+                        Đổi mục tiêu
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-slate-900 rounded-full transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
+                {targetSuccess && <p role="status" className="text-xs text-emerald-700">{targetSuccess}</p>}
+                <p className="text-xs text-slate-500">
+                  Chưa có mô hình dự đoán điểm thi được kiểm chứng. Hãy hoàn thành bài đánh giá ban đầu để ghi nhận kết quả học tập.
+                </p>
               </div>
 
               <div className="pt-2.5 border-t border-slate-100 space-y-2.5 text-slate-600 text-[13px]">
-                <div className="flex justify-between">
-                  <span>Khoảng cách mục tiêu:</span>
-                  <span className="font-medium text-slate-800">
-                    {user.targetScore > estimatedScore
-                      ? `Cần thêm +${(user.targetScore - estimatedScore).toFixed(1)}đ`
-                      : 'Đã đạt mục tiêu'}
-                  </span>
-                </div>
                 <div className="flex justify-between">
                   <span>Số câu hỏi đã hoàn thành:</span>
                   <span className="font-mono font-semibold text-slate-900">
                     {user.completedQuestionsCount} câu
                   </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Chế độ thuật toán:</span>
-                  <span className="font-medium text-slate-800">Thích ứng Bayesian (BKT)</span>
                 </div>
               </div>
 
@@ -504,6 +606,127 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </button>
             </div>
           </div>
+
+          {canEditTargetScore && (
+            <dialog
+              ref={targetDialogRef}
+              id="target-score-dialog"
+              aria-labelledby="target-score-dialog-title"
+              onCancel={(event) => {
+                event.preventDefault();
+                if (!targetSaving) cancelTargetEdit();
+              }}
+              className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-900/50"
+            >
+              <form onSubmit={(event) => void handleSaveTarget(event)} className="space-y-5 p-5 sm:p-6">
+                <div>
+                  <h2 id="target-score-dialog-title" className="text-lg font-semibold">
+                    Đổi mục tiêu điểm thi
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Chọn điểm mục tiêu từ 1.0 đến 10.0.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="target-score" className="block text-sm font-medium text-slate-700">
+                    Điểm mục tiêu
+                  </label>
+                  <select
+                    ref={targetScoreSelectRef}
+                    id="target-score"
+                    value={selectedTarget}
+                    onChange={(event) => setSelectedTarget(event.target.value)}
+                    className="min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"
+                    disabled={targetSaving}
+                  >
+                    {Array.from({ length: 19 }, (_, index) => (1 + index * 0.5).toFixed(1)).map((score) => (
+                      <option key={score} value={score}>{score} / 10</option>
+                    ))}
+                  </select>
+                </div>
+                {targetError && <p role="alert" className="text-sm text-rose-700">{targetError}</p>}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={targetSaving}
+                    onClick={cancelTargetEdit}
+                    className="btn-secondary text-xs py-2 px-3"
+                  >
+                    Hủy
+                  </button>
+                  <button type="submit" disabled={targetSaving} className="btn text-xs py-2 px-3">
+                    {targetSaving ? 'Đang lưu…' : 'Lưu mục tiêu'}
+                  </button>
+                </div>
+              </form>
+            </dialog>
+          )}
+
+          {showStudentLearningControls && (
+            <div className="panel">
+              <div className="pb-3 mb-3 border-b border-slate-200">
+                <h2 className="text-[15px] font-semibold text-slate-900">Learning Method</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Chọn cách sắp xếp bài luyện; lựa chọn này không thay đổi lịch sử kết quả.
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Luyện tập theo mục tiêu điểm chưa khả dụng vì hệ thống chưa kiểm chứng cách chuyển mục tiêu thành bài tập phù hợp.
+                </p>
+              </div>
+              <div role="group" aria-label="Learning Method" className="grid gap-2">
+                {([
+                  {
+                    id: 'structured',
+                    title: 'Structured Learning Path',
+                    description: 'Follow an organized sequence of topics based on the curriculum, with practice progressing through appropriate difficulty levels.',
+                  },
+                  {
+                    id: 'focus_weak',
+                    title: 'Focus on Weak Topics',
+                    description: 'Prioritize topics where your actual practice results indicate that you need more work.',
+                  },
+                  {
+                    id: 'smart_review',
+                    title: 'Smart Review',
+                    description: 'Adjust practice recommendations using your previous answers and recorded learning progress.',
+                  },
+                ] as const).map((option) => {
+                  const selected = learningMode === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={!learningModeReady || modeSaving || !learningModeCanPersist}
+                      onClick={() => void handleLearningModeChange(option.id)}
+                      className={`w-full rounded-lg border p-3 text-left transition ${
+                        selected
+                          ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900'
+                          : 'border-slate-200 bg-white hover:border-slate-400'
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-slate-900">{option.title}</span>
+                        {selected && <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-600" />}
+                      </span>
+                      <span className="mt-1 block text-xs leading-relaxed text-slate-600">{option.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {!learningModeReady && (
+                <p role="status" className="mt-2 text-xs text-slate-500">Đang tải tùy chọn học tập…</p>
+              )}
+              {!learningModeCanPersist && (
+                <p role="alert" className="mt-2 text-xs text-rose-700">
+                  Tùy chọn đã lưu không hợp lệ; lựa chọn hiện tại chưa được ghi đè.
+                </p>
+              )}
+              {modeSaving && <p role="status" className="mt-2 text-xs text-slate-500">Đang lưu phương pháp học…</p>}
+              {modeSuccess && <p role="status" className="mt-2 text-xs text-emerald-700">{modeSuccess}</p>}
+              {modeError && <p role="alert" className="mt-2 text-xs text-rose-700">{modeError}</p>}
+            </div>
+          )}
 
           {/* Card 2: Bảng xếp hạng */}
           <div className="panel">
@@ -540,10 +763,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           </div>
 
-          {/* Card 4: 3 Điểm yếu cần khắc phục */}
+          {/* Card 4: measured areas for reinforcement */}
           <div className="panel">
             <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
-              <h2 className="text-sm font-semibold text-slate-900">3 Điểm yếu cần củng cố</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Chuyên đề cần củng cố</h2>
               <AlertTriangle className="w-4 h-4 text-amber-600" />
             </div>
             <p className="text-xs text-slate-500 mb-3">
@@ -551,7 +774,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </p>
 
             <div className="space-y-2.5">
-              {weakConcepts.map(({ concept, score }) => (
+              {weakConcepts.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  Chưa có dữ liệu gắn với tài khoản này để xác định chuyên đề cần củng cố.
+                </p>
+              ) : weakConcepts.map(({ concept, score }) => (
                 <div key={concept.id} className="p-2.5 bg-slate-50/80 border border-slate-200 rounded-lg">
                   <div className="flex items-center justify-between text-xs mb-1.5">
                     <span className="font-medium text-slate-900 truncate max-w-[180px]" title={concept.name}>

@@ -5,23 +5,26 @@ import {
   ExamSession,
   Question,
   AdaptiveRecommendation,
+  AdaptivePracticeResult,
   LearningPathDay,
   ExamBlueprint,
   ExamTrack,
 } from './types';
 import {
-  INITIAL_STUDENT_MASTERIES,
   OFFICIAL_EXAM_BLUEPRINT_2025,
   CONCEPTS_LIST,
 } from './data/curriculumData';
 import { SAMPLE_QUESTION_BANK } from './data/questionBank';
 import { AdaptiveLearningEngine } from './services/adaptiveEngine';
 import {
+  completeAdaptivePractice,
+  PRACTICE_MASTERY_UPDATE_ERROR,
+} from './services/practiceCompletion';
+import {
   ExamCatalogItem,
   ExamAttemptRecord,
   ClassStudentExamResult,
   INITIAL_EXAMS_CATALOG,
-  loadStoredExamHistory,
 } from './data/examCatalogData';
 
 import { Header } from './components/Header';
@@ -44,6 +47,23 @@ import { MemberDirectory } from './components/MemberDirectory';
 import { AccountSettingsPage, PublicMemberProfilePage } from './components/MemberPages';
 import { supabase } from './services/supabaseClient';
 import { createAvatarUrl, getMyMemberProfile, type MemberProfile } from './services/memberService';
+import {
+  browserMasteryStorage,
+  getVerifiedMastery,
+  loadUserMasteries,
+  saveUserMasteries,
+} from './services/masteryStorage';
+import {
+  browserPreferenceStorage,
+  loadLearningMode,
+  saveLearningMode,
+  type LearningMode,
+} from './services/learningPreferences';
+import {
+  browserExamHistoryStorage,
+  loadUserExamHistory,
+  saveUserExamHistory,
+} from './services/examHistoryStorage';
 
 import {
   Play,
@@ -56,7 +76,23 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 
-const STORAGE_KEY_MASTERIES = 'tinmaster_masteries_v1';
+interface MasteryState {
+  userId: string;
+  masteries: Record<string, StudentMastery>;
+  canPersist: boolean;
+}
+
+interface LearningModeState {
+  userId: string;
+  mode: LearningMode;
+  canPersist: boolean;
+}
+
+interface ExamHistoryState {
+  userId: string;
+  records: ExamAttemptRecord[];
+  canPersist: boolean;
+}
 
 export default function App() {
   return (
@@ -99,7 +135,6 @@ function TinMasterApp() {
     email: '',
     role: 'student',
     targetScore: 8.5,
-    estimatedScore: 0,
     completedQuestionsCount: 0,
     streakDays: 0,
     xp: 0,
@@ -108,13 +143,87 @@ function TinMasterApp() {
   });
 
   // 2. Knowledge Mastery State (Bayesian Knowledge Tracing)
-  const [masteries, setMasteries] = useState<Record<string, StudentMastery>>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_MASTERIES);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return INITIAL_STUDENT_MASTERIES;
-  });
+  const activeUserId = auth.status === 'authenticated' ? auth.profile?.id ?? null : null;
+  const [masteryState, setMasteryState] = useState<MasteryState | null>(null);
+  const [learningModeState, setLearningModeState] = useState<LearningModeState | null>(null);
+  const [practiceOwnerId, setPracticeOwnerId] = useState<string | null>(null);
+  const [currentExamSession, setCurrentExamSession] = useState<ExamSession | null>(null);
+  const [currentExamSessionOwnerId, setCurrentExamSessionOwnerId] = useState<string | null>(null);
+  const [practiceQuestions, setPracticeQuestions] = useState<Question[] | null>(null);
+  const [practiceRecommendation, setPracticeRecommendation] = useState<AdaptiveRecommendation | undefined>(undefined);
+  const [examHistoryState, setExamHistoryState] = useState<ExamHistoryState | null>(null);
+
+  useEffect(() => {
+    if (!activeUserId) return;
+    const loaded = loadUserMasteries(browserMasteryStorage, activeUserId);
+    const loadedLearningMode = loadLearningMode(browserPreferenceStorage, activeUserId);
+    const loadedExamHistory = loadUserExamHistory(browserExamHistoryStorage, activeUserId);
+    setPracticeQuestions(null);
+    setPracticeOwnerId(null);
+    setPracticeRecommendation(undefined);
+    setCurrentExamSession(null);
+    setCurrentExamSessionOwnerId(null);
+    setUser((prev) => ({
+      ...prev,
+      completedQuestionsCount: 0,
+      streakDays: 0,
+      xp: 0,
+      totalStudyMinutes: 0,
+    }));
+    setMasteryState({
+      userId: activeUserId,
+      masteries: loaded.masteries,
+      canPersist: loaded.canPersist,
+    });
+    setLearningModeState({
+      userId: activeUserId,
+      mode: loadedLearningMode.mode,
+      canPersist: loadedLearningMode.canPersist,
+    });
+    setExamHistoryState({
+      userId: activeUserId,
+      records: loadedExamHistory.records,
+      canPersist: loadedExamHistory.canPersist,
+    });
+  }, [activeUserId]);
+
+  const masteries = masteryState?.userId === activeUserId
+    ? masteryState.masteries
+    : {};
+  const learningMode = learningModeState?.userId === activeUserId
+    ? learningModeState.mode
+    : 'structured';
+  const examHistory = examHistoryState?.userId === activeUserId
+    ? examHistoryState.records
+    : [];
+  const visibleExamSession = currentExamSessionOwnerId === activeUserId
+    ? currentExamSession
+    : null;
+
+  const setMasteries = (nextMasteries: Record<string, StudentMastery>) => {
+    if (!activeUserId) return;
+    setMasteryState((current) => ({
+      userId: activeUserId,
+      masteries: nextMasteries,
+      canPersist: current?.userId === activeUserId ? current.canPersist : true,
+    }));
+  };
+
+  const setOwnedPracticeQuestions = (questions: Question[]) => {
+    setPracticeOwnerId(activeUserId);
+    setPracticeQuestions(questions);
+  };
+
+  const handleLearningModeChange = async (mode: LearningMode) => {
+    if (!activeUserId) throw new Error('Đăng nhập để lưu phương pháp học.');
+    if (learningModeState?.userId === activeUserId && !learningModeState.canPersist) {
+      throw new Error('Tùy chọn học tập đã lưu không hợp lệ; TinMaster không ghi đè dữ liệu đó.');
+    }
+    if (!saveLearningMode(browserPreferenceStorage, activeUserId, mode)) {
+      throw new Error('Không thể lưu phương pháp học trên thiết bị này.');
+    }
+    setLearningModeState({ userId: activeUserId, mode, canPersist: true });
+  };
 
   // 2.1 Question Bank (Preloaded + Custom uploaded / manually created)
   const [allQuestions, setAllQuestions] = useState<Question[]>(() => {
@@ -172,15 +281,12 @@ function TinMasterApp() {
   };
 
   // 3. Navigation & Modals
-  const [currentExamSession, setCurrentExamSession] = useState<ExamSession | null>(null);
   const [showVideoModal, setShowVideoModal] = useState<boolean>(false);
   const [videoConceptId, setVideoConceptId] = useState<string | undefined>(undefined);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState<boolean>(false);
   const [showTeacherInvitationModal, setShowTeacherInvitationModal] = useState(false);
   const [showSelectTrackModal, setShowSelectTrackModal] = useState<boolean>(false);
   const [pendingExamStart, setPendingExamStart] = useState<{ blueprint: ExamBlueprint; examItem?: ExamCatalogItem } | null>(null);
-  const [practiceQuestions, setPracticeQuestions] = useState<Question[] | null>(null);
-  const [practiceRecommendation, setPracticeRecommendation] = useState<AdaptiveRecommendation | undefined>(undefined);
 
   // 4. Toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -189,6 +295,16 @@ function TinMasterApp() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
+
+  useEffect(() => {
+    if (
+      activeUserId &&
+      masteryState?.userId === activeUserId &&
+      !masteryState.canPersist
+    ) {
+      showToast('Không thể xác nhận dữ liệu tiến độ đã lưu; dữ liệu hiện có sẽ không bị ghi đè.');
+    }
+  }, [activeUserId, masteryState]);
 
   useEffect(() => {
     if (auth.status !== 'authenticated' || !auth.error) return;
@@ -210,10 +326,6 @@ function TinMasterApp() {
     } catch {}
     return INITIAL_EXAMS_CATALOG;
   });
-
-  const [examHistory, setExamHistory] = useState<ExamAttemptRecord[]>(() =>
-    loadStoredExamHistory(localStorage)
-  );
 
   const [classResults] = useState<ClassStudentExamResult[]>([]);
   const [activeExamBlueprint, setActiveExamBlueprint] = useState<ExamBlueprint>(OFFICIAL_EXAM_BLUEPRINT_2025);
@@ -293,20 +405,29 @@ function TinMasterApp() {
     : userState;
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_MASTERIES, JSON.stringify(masteries));
-    } catch {}
-  }, [masteries]);
+    if (
+      activeUserId &&
+      masteryState?.userId === activeUserId &&
+      masteryState.canPersist
+    ) {
+      if (!saveUserMasteries(browserMasteryStorage, activeUserId, masteryState.masteries)) {
+        showToast('Không thể lưu tiến độ trên thiết bị này; thay đổi mới chỉ còn trong phiên hiện tại.');
+      }
+    }
+  }, [activeUserId, masteryState]);
 
   // Derive dynamic adaptive recommendations & roadmap
   const recommendations = AdaptiveLearningEngine.getAdaptiveRecommendations(
     masteries,
     allQuestions,
-    3
+    3,
+    [],
+    learningMode
   );
 
   const learningPath: LearningPathDay[] = AdaptiveLearningEngine.generate7DayLearningPath(
-    masteries
+    masteries,
+    learningMode
   );
 
   // Assemble exam questions filtered by track for elective exams
@@ -393,6 +514,7 @@ function TinMasterApp() {
   const handleViewExamSession = (attempt: ExamAttemptRecord) => {
     if (attempt.sessionData) {
       setCurrentExamSession(attempt.sessionData);
+      setCurrentExamSessionOwnerId(activeUserId);
       setActiveTab('exam_review');
     } else {
       // Synthetic readable session
@@ -410,6 +532,7 @@ function TinMasterApp() {
         questionTelemetries: {},
       };
       setCurrentExamSession(syntheticSession);
+      setCurrentExamSessionOwnerId(activeUserId);
       setActiveTab('exam_review');
     }
   };
@@ -491,6 +614,7 @@ function TinMasterApp() {
 
     setMasteries(updatedMasteries);
     setCurrentExamSession(enrichedSession);
+    setCurrentExamSessionOwnerId(activeUserId);
 
     // Save attempt to student exam history
     const prevAttempt = examHistory.find((h) => h.examId === (currentExamItem?.id || 'exam-thpt-2025-std'));
@@ -518,13 +642,20 @@ function TinMasterApp() {
       electiveScore: breakdown.electiveScore,
     };
 
-    setExamHistory((prev) => {
-      const updated = [newAttempt, ...prev];
-      try {
-        localStorage.setItem('tinmaster_student_exam_history_v1', JSON.stringify(updated));
-      } catch {}
-      return updated;
+    if (!activeUserId) return;
+    const updatedHistory = [newAttempt, ...examHistory];
+    const currentHistoryCanPersist =
+      examHistoryState?.userId !== activeUserId || examHistoryState.canPersist;
+    const saved = currentHistoryCanPersist &&
+      saveUserExamHistory(browserExamHistoryStorage, activeUserId, updatedHistory);
+    setExamHistoryState({
+      userId: activeUserId,
+      records: updatedHistory,
+      canPersist: currentHistoryCanPersist && saved,
     });
+    if (!saved) {
+      showToast('Không thể lưu lịch sử bài thi; dữ liệu cũ được giữ nguyên trên thiết bị.');
+    }
 
     // Update user stats
     setUser((prev) => ({
@@ -541,12 +672,12 @@ function TinMasterApp() {
   const handleStartAdaptivePractice = (rec?: AdaptiveRecommendation) => {
     if (rec) {
       setPracticeRecommendation(rec);
-      setPracticeQuestions([rec.question]);
+      setOwnedPracticeQuestions([rec.question]);
     } else if (recommendations[0]) {
       setPracticeRecommendation(recommendations[0]);
-      setPracticeQuestions([recommendations[0].question]);
+      setOwnedPracticeQuestions([recommendations[0].question]);
     } else {
-      setPracticeQuestions(allQuestions.slice(0, 3));
+      setOwnedPracticeQuestions(allQuestions.slice(0, 3));
     }
   };
 
@@ -560,7 +691,7 @@ function TinMasterApp() {
         question,
         score: 0.85,
         reasons: {
-          weaknessScore: 0.7,
+          weaknessScore: 0.5,
           recencyScore: 0.6,
           difficultyFitScore: 0.8,
           importanceScore: 0.8,
@@ -568,68 +699,51 @@ function TinMasterApp() {
         },
       });
     }
-    setPracticeQuestions([question]);
+    setOwnedPracticeQuestions([question]);
   };
 
   // Start Micro-quiz (3 or 5 questions)
   const handleStartMicroQuiz = (count: number) => {
-    const sortedWeak = [...CONCEPTS_LIST].sort((a, b) => {
-      const mA = masteries[a.id]?.masteryScore ?? 0.5;
-      const mB = masteries[b.id]?.masteryScore ?? 0.5;
-      return mA - mB;
+    const diagnosticConcepts = [...CONCEPTS_LIST].sort((a, b) => {
+      const masteryA = getVerifiedMastery(masteries, a.id);
+      const masteryB = getVerifiedMastery(masteries, b.id);
+      if (masteryA && masteryB) return masteryA.masteryScore - masteryB.masteryScore;
+      if (masteryA) return -1;
+      if (masteryB) return 1;
+      return b.importanceWeight - a.importanceWeight;
     });
 
-    const weakConceptIds = sortedWeak.slice(0, 3).map((c) => c.id);
-    const selected = allQuestions.filter((q) => weakConceptIds.includes(q.conceptId)).slice(0, count);
+    const diagnosticConceptIds = diagnosticConcepts.slice(0, 3).map((c) => c.id);
+    const selected = allQuestions.filter((q) => diagnosticConceptIds.includes(q.conceptId)).slice(0, count);
 
-    setPracticeQuestions(selected.length > 0 ? selected : allQuestions.slice(0, count));
+    setOwnedPracticeQuestions(selected.length > 0 ? selected : allQuestions.slice(0, count));
     setPracticeRecommendation(undefined);
   };
 
   // Finish Practice session
-  const handleFinishPracticeSession = (
-    results: { question: Question; isCorrect: boolean; activeTimeSec: number }[]
-  ) => {
-    let updatedMasteries = { ...masteries };
-    let correctCount = 0;
+  const handleFinishPracticeSession = (results: AdaptivePracticeResult[]) => {
+    const correctCount = results.filter((result) => result.isCorrect).length;
+    completeAdaptivePractice(
+      masteries,
+      results,
+      (currentMasteries, practiceResults) =>
+        AdaptiveLearningEngine.updateMasteriesFromPracticeResults(currentMasteries, practiceResults),
+      (updatedMasteries) => {
+        setMasteries(updatedMasteries);
+        setPracticeQuestions(null);
+        setPracticeOwnerId(null);
+        setPracticeRecommendation(undefined);
 
-    results.forEach((r) => {
-      if (r.isCorrect) correctCount++;
-      const currentM = updatedMasteries[r.question.conceptId] || {
-        conceptId: r.question.conceptId,
-        masteryScore: 0.5,
-        confidenceScore: 0.5,
-        totalAttempts: 0,
-        correctAttempts: 0,
-        consecutiveSuccessStreak: 0,
-        lastPracticedAt: new Date().toISOString(),
-        nextSpacedReviewAt: new Date().toISOString(),
-        trend: 'stable' as const,
-      };
+        setUser((prev) => ({
+          ...prev,
+          completedQuestionsCount: prev.completedQuestionsCount + results.length,
+          xp: prev.xp + results.length * 15,
+        }));
 
-      const updatedM = AdaptiveLearningEngine.updateConceptMastery(
-        currentM,
-        r.question.conceptId,
-        r.isCorrect ? 1.0 : 0.0,
-        r.question.difficulty,
-        r.isCorrect ? 'fast_correct' : 'slow_incorrect',
-        r.activeTimeSec
-      );
-
-      updatedMasteries[r.question.conceptId] = updatedM;
-    });
-
-    setMasteries(updatedMasteries);
-    setPracticeQuestions(null);
-    setPracticeRecommendation(undefined);
-
-    setUser((prev) => ({
-      ...prev,
-      completedQuestionsCount: prev.completedQuestionsCount + results.length,
-      xp: prev.xp + results.length * 15,
-    }));
-
-    showToast(`Đã hoàn thành! Đúng ${correctCount}/${results.length} câu. +${results.length * 15} XP!`);
+        showToast(`Đã hoàn thành! Đúng ${correctCount}/${results.length} câu. +${results.length * 15} XP!`);
+      },
+      (message) => showToast(message)
+    );
   };
 
   const handleOpenVideoModal = (conceptId?: string) => {
@@ -695,7 +809,7 @@ function TinMasterApp() {
 
       {/* 2. FLOATING TOAST NOTIFICATION */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#1a1a1a] text-white px-4 py-2.5 rounded shadow-lg flex items-center space-x-2 text-xs font-semibold border border-[#d1d5db]">
+        <div className="fixed bottom-6 right-6 z-[60] bg-[#1a1a1a] text-white px-4 py-2.5 rounded shadow-lg flex items-center space-x-2 text-xs font-semibold border border-[#d1d5db]">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
@@ -706,10 +820,18 @@ function TinMasterApp() {
         {/* VIEW A: STUDENT DASHBOARD */}
         {activeTab === 'dashboard' && (
           <StudentDashboard
+            key={activeUserId ?? 'signed-out'}
             user={user}
             masteries={masteries}
             recommendations={recommendations}
             learningPath={learningPath}
+            learningMode={learningMode}
+            learningModeReady={learningModeState?.userId === activeUserId}
+            learningModeCanPersist={learningModeState?.canPersist ?? true}
+            onChangeLearningMode={handleLearningModeChange}
+            onSaveTargetScore={auth.updateTargetScore}
+            canEditTargetScore={Boolean(auth.profile)}
+            showStudentLearningControls={user.role === 'student'}
             onStartExam={handleStartExam}
             onStartAdaptivePractice={handleStartAdaptivePractice}
             onStartMicroQuiz={handleStartMicroQuiz}
@@ -737,6 +859,7 @@ function TinMasterApp() {
         {/* VIEW B: EXAM ROOM / SIMULATION ENGINE */}
         {activeTab === 'exam_simulation' && (
           <ExamSimulation
+            key={activeUserId ?? 'signed-out'}
             blueprint={activeExamBlueprint}
             questions={assembleExamQuestions(activeExamBlueprint, currentExamItem, user.examTrack || undefined)}
             studentTrack={user.examTrack || undefined}
@@ -747,15 +870,15 @@ function TinMasterApp() {
         )}
 
         {/* VIEW C: EXAM REVIEW WITH BEHAVIORAL DIAGNOSTICS */}
-        {activeTab === 'exam_review' && currentExamSession && (
+        {activeTab === 'exam_review' && visibleExamSession && (
           <ExamReview
-            session={currentExamSession}
-            questions={assembleExamQuestions(activeExamBlueprint, currentExamItem, currentExamSession.studentTrack || user.examTrack || undefined)}
+            session={visibleExamSession}
+            questions={assembleExamQuestions(activeExamBlueprint, currentExamItem, visibleExamSession.studentTrack || user.examTrack || undefined)}
             masteries={masteries}
             onReturnDashboard={() => setActiveTab('exam_list')}
             onPracticeConcept={(conceptId) => {
               const matched = allQuestions.filter((q) => q.conceptId === conceptId);
-              setPracticeQuestions(matched.length > 0 ? matched : allQuestions.slice(0, 3));
+              setOwnedPracticeQuestions(matched.length > 0 ? matched : allQuestions.slice(0, 3));
             }}
           />
         )}
@@ -780,7 +903,7 @@ function TinMasterApp() {
             masteries={masteries}
             onStartPracticeConcept={(conceptId) => {
               const matched = allQuestions.filter((q) => q.conceptId === conceptId);
-              setPracticeQuestions(matched.length > 0 ? matched : allQuestions.slice(0, 3));
+              setOwnedPracticeQuestions(matched.length > 0 ? matched : allQuestions.slice(0, 3));
             }}
             onOpenVideoModal={handleOpenVideoModal}
           />
@@ -860,19 +983,21 @@ function TinMasterApp() {
         <GoogleWorkspaceModal
           user={user}
           masteries={masteries}
-          recentSession={currentExamSession}
+          recentSession={visibleExamSession}
           onClose={() => setShowWorkspaceModal(false)}
         />
       )}
 
       {/* Adaptive Practice / Micro Quiz Modal */}
-      {practiceQuestions && (
+      {practiceQuestions && practiceOwnerId === activeUserId && activeUserId && (
         <AdaptivePracticeSession
+          key={activeUserId ?? 'signed-out'}
           questions={practiceQuestions}
           initialRecommendation={practiceRecommendation}
           onFinishPractice={handleFinishPracticeSession}
           onClose={() => {
             setPracticeQuestions(null);
+            setPracticeOwnerId(null);
             setPracticeRecommendation(undefined);
           }}
         />

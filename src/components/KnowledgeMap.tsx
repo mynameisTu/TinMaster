@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ConceptNode, StudentMastery, CurriculumStrand, STRAND_LABELS } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
+import { getVerifiedMastery } from '../services/masteryStorage';
 import {
   BrainCircuit,
   Database,
@@ -161,10 +162,9 @@ export const KnowledgeMap: React.FC<KnowledgeMapProps> = ({
       {/* Concept Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredConcepts.map((concept) => {
-          const m = masteries[concept.id];
-          const masteryScore = Math.round((m?.masteryScore ?? 0.5) * 100);
-          const totalAttempts = m?.totalAttempts ?? 0;
-          const confidence = Math.round((m?.confidenceScore ?? 0.3) * 100);
+          const m = getVerifiedMastery(masteries, concept.id);
+          const masteryScore = m ? Math.round(m.masteryScore * 100) : null;
+          const confidence = m ? Math.round(m.confidenceScore * 100) : null;
 
           return (
             <div
@@ -185,35 +185,45 @@ export const KnowledgeMap: React.FC<KnowledgeMapProps> = ({
 
                   <span
                     className={
-                      masteryScore >= 70
+                      masteryScore === null
+                        ? 'status-caution'
+                        : masteryScore >= 70
                         ? 'status-stable'
                         : masteryScore >= 50
                         ? 'status-caution'
                         : 'status-gap'
                     }
                   >
-                    {masteryScore}%
+                    {masteryScore === null ? 'Chưa có dữ liệu' : `${masteryScore}%`}
                   </span>
                 </div>
 
                 {/* Progress bar */}
                 <div className="space-y-1">
-                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        masteryScore >= 70
-                          ? 'bg-slate-800'
-                          : masteryScore >= 50
-                          ? 'bg-slate-500'
-                          : 'bg-slate-300'
-                      }`}
-                      style={{ width: `${masteryScore}%` }}
-                    />
-                  </div>
                   <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span>Làm chủ: {masteryScore}%</span>
-                    <span>Độ tin cậy: {confidence}%</span>
+                    {masteryScore === null ? (
+                      <span>Chưa có dữ liệu học tập gắn với tài khoản này</span>
+                    ) : (
+                      <>
+                        <span>Làm chủ: {masteryScore}%</span>
+                        <span>Độ tin cậy: {confidence}%</span>
+                      </>
+                    )}
                   </div>
+                  {masteryScore !== null && (
+                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          masteryScore >= 70
+                            ? 'bg-slate-800'
+                            : masteryScore >= 50
+                            ? 'bg-slate-500'
+                            : 'bg-slate-300'
+                        }`}
+                        style={{ width: `${masteryScore}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Description */}

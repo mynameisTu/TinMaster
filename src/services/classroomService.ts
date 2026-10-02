@@ -39,7 +39,11 @@ export interface ClassroomStudent {
   leftAt: string | null;
 }
 
-export function validateClassroomName(name: string): string | null {
+export function validateClassroomName(name: unknown): string | null {
+  if (typeof name !== 'string') {
+    return 'Tên lớp học cần có từ 1 đến 120 ký tự.';
+  }
+
   const trimmed = name.trim();
   if (trimmed.length < 1 || trimmed.length > 120) {
     return 'Tên lớp học cần có từ 1 đến 120 ký tự.';
@@ -47,25 +51,27 @@ export function validateClassroomName(name: string): string | null {
   return null;
 }
 
-export function validateClassroomGrade(grade?: number | null): string | null {
-  if (grade === null || grade === undefined) return null;
-  if (!Number.isInteger(grade) || grade < 10 || grade > 12) {
+export function validateClassroomGrade(grade?: number | string | null): string | null {
+  const coercedGrade = typeof grade === 'string' ? Number(grade) : grade;
+  if (coercedGrade === null || coercedGrade === undefined) return null;
+  if (!Number.isInteger(coercedGrade) || coercedGrade < 10 || coercedGrade > 12) {
     return 'Khối lớp phải là 10, 11 hoặc 12.';
   }
   return null;
 }
 
-export function validateInvitationCode(code: string): string | null {
-  const normalized = code.trim().toLowerCase();
+export function validateInvitationCode(code: unknown): string | null {
+  const normalized = typeof code === 'string' ? code.trim().toLowerCase() : '';
   if (!/^[0-9a-f]{48}$/.test(normalized)) {
     return 'Mã mời phải gồm đúng 48 ký tự thập lục phân (hex).';
   }
   return null;
 }
 
-export function validateMaxUses(maxUses?: number): string | null {
+export function validateMaxUses(maxUses?: number | string): string | null {
   if (maxUses === undefined) return null;
-  if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 500) {
+  const coercedMaxUses = typeof maxUses === 'string' ? Number(maxUses) : maxUses;
+  if (!Number.isInteger(coercedMaxUses) || coercedMaxUses < 1 || coercedMaxUses > 500) {
     return 'Số lượt sử dụng tối đa phải từ 1 đến 500.';
   }
   return null;
@@ -79,57 +85,58 @@ export function mapClassroomError(error: unknown): Error {
   const err = error as { message?: string; code?: string };
   const msg = err.message ?? '';
   const code = err.code ?? '';
+  const msgLower = msg.toLowerCase();
 
-  if (code === '42501' || msg.includes('Authentication required')) {
-    if (msg.includes('Teacher access required')) {
+  if (code === '42501' || msgLower.includes('authentication required')) {
+    if (msgLower.includes('teacher access required')) {
       return new Error('Thao tác này chỉ dành cho tài khoản giáo viên.');
     }
-    if (msg.includes('Student access required')) {
+    if (msgLower.includes('student access required')) {
       return new Error('Chỉ học sinh mới có thể tham gia lớp học.');
     }
-    if (msg.includes('Classroom access required')) {
+    if (msgLower.includes('classroom access required')) {
       return new Error('Bạn không có quyền truy cập hoặc thao tác trên lớp học này.');
     }
     return new Error('Yêu cầu đăng nhập hoặc quyền hạn không đủ.');
   }
 
-  if (code === '23505' || msg.includes('Active classroom membership already exists')) {
+  if (code === '23505' || msgLower.includes('active classroom membership already exists')) {
     return new Error('Bạn đã là thành viên đang hoạt động của lớp học này.');
   }
 
-  if (msg.includes('Invitation code is invalid, expired, revoked, or fully used')) {
+  if (msgLower.includes('invitation code is invalid, expired, revoked, or fully used')) {
     return new Error('Mã mời không hợp lệ, đã hết hạn, bị thu hồi hoặc đã hết lượt sử dụng.');
   }
 
-  if (msg.includes('A classroom name between 1 and 120 characters is required')) {
+  if (msgLower.includes('a classroom name between 1 and 120 characters is required')) {
     return new Error('Tên lớp học phải có từ 1 đến 120 ký tự.');
   }
 
-  if (msg.includes('Grade must be between 10 and 12')) {
+  if (msgLower.includes('grade must be between 10 and 12')) {
     return new Error('Khối lớp phải từ 10 đến 12.');
   }
 
-  if (msg.includes('Maximum uses must be between 1 and 500')) {
+  if (msgLower.includes('maximum uses must be between 1 and 500')) {
     return new Error('Số lượt sử dụng tối đa phải từ 1 đến 500.');
   }
 
-  if (msg.includes('Archived classrooms cannot issue invitation codes')) {
+  if (msgLower.includes('archived classrooms cannot issue invitation codes')) {
     return new Error('Không thể tạo mã mời cho lớp học đã lưu trữ.');
   }
 
-  if (msg.includes('Active classroom membership not found')) {
+  if (msgLower.includes('active classroom membership not found')) {
     return new Error('Không tìm thấy thông tin thành viên đang hoạt động trong lớp học.');
   }
 
-  if (msg.includes('Classroom not found or already archived')) {
+  if (msgLower.includes('classroom not found or already archived')) {
     return new Error('Lớp học không tồn tại hoặc đã được lưu trữ trước đó.');
   }
 
-  if (msg.includes('Invitation not found, inaccessible, or already revoked')) {
+  if (msgLower.includes('invitation not found, inaccessible, or already revoked')) {
     return new Error('Mã mời không tồn tại, không thể truy cập hoặc đã được thu hồi.');
   }
 
-  if (code === '55000' || msg.includes('Archived classrooms are immutable')) {
+  if (code === '55000' || msgLower.includes('archived classrooms are immutable')) {
     return new Error('Lớp học đã lưu trữ không thể chỉnh sửa thêm.');
   }
 
@@ -292,8 +299,14 @@ export async function joinClassroom(
 
   if (error) throw mapClassroomError(error);
 
-  const classroomId = typeof data === 'string' ? data : (data && typeof data === 'object' && 'classroom_id' in data ? (data as { classroom_id: string }).classroom_id : null);
-  if (!classroomId || typeof classroomId !== 'string') {
+  const record = typeof data === 'string' ? data : firstRecord(data);
+  const classroomId = typeof record === 'string'
+    ? record
+    : record && typeof record === 'object' && 'classroom_id' in record
+      ? String((record as { classroom_id?: unknown }).classroom_id ?? '')
+      : null;
+
+  if (!classroomId || typeof classroomId !== 'string' || classroomId.length === 0) {
     throw new Error('Không nhận được mã xác nhận lớp học sau khi tham gia.');
   }
 
