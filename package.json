@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit",
     "test:member": "tsx --test tests/member.test.ts",
     "test:classroom": "tsx --test tests/classroom.test.ts",
+    "test:progress": "tsx --test tests/studentProgress.test.tsx",
     "test:leaderboard": "tsx --test tests/leaderboard.test.ts",
     "test:api": "tsx --test tests/api.test.ts tests/auth.test.ts"
   },

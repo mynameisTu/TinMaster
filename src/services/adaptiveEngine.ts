@@ -10,9 +10,12 @@ import {
   InteractionQuadrant,
   LearningPathDay,
   ConceptNode,
+  AdaptivePracticeResult,
 } from '../types';
 import { CONCEPTS_LIST } from '../data/curriculumData';
 import { SAMPLE_QUESTION_BANK } from '../data/questionBank';
+import { getVerifiedMastery } from './masteryStorage';
+import type { LearningMode } from './learningPreferences';
 
 export class AdaptiveLearningEngine {
   /**
@@ -192,6 +195,10 @@ export class AdaptiveLearningEngine {
     behaviorQuadrant: InteractionQuadrant,
     timeSpentSec: number
   ): StudentMastery {
+    if (!Number.isFinite(scoreRatio) || scoreRatio < 0 || scoreRatio > 1) {
+      throw new RangeError('Mastery score ratio must be a finite number between 0 and 1.');
+    }
+
     const prior = currentMastery ? currentMastery.masteryScore : 0.5;
     const totalAttempts = (currentMastery?.totalAttempts || 0) + 1;
     const isSuccess = scoreRatio >= 0.75;
@@ -246,6 +253,38 @@ export class AdaptiveLearningEngine {
     };
   }
 
+  public static updateMasteriesFromPracticeResults(
+    masteries: Record<string, StudentMastery>,
+    results: AdaptivePracticeResult[]
+  ): Record<string, StudentMastery> {
+    const updatedMasteries = { ...masteries };
+
+    results.forEach((result) => {
+      const currentMastery = updatedMasteries[result.question.conceptId] || {
+        conceptId: result.question.conceptId,
+        masteryScore: 0.5,
+        confidenceScore: 0.5,
+        totalAttempts: 0,
+        correctAttempts: 0,
+        consecutiveSuccessStreak: 0,
+        lastPracticedAt: new Date().toISOString(),
+        nextSpacedReviewAt: new Date().toISOString(),
+        trend: 'stable' as const,
+      };
+
+      updatedMasteries[result.question.conceptId] = this.updateConceptMastery(
+        currentMastery,
+        result.question.conceptId,
+        result.scoreRatio,
+        result.question.difficulty,
+        result.isCorrect ? 'fast_correct' : 'slow_incorrect',
+        result.activeTimeSec
+      );
+    });
+
+    return updatedMasteries;
+  }
+
   /**
    * Động cơ Đề xuất Câu hỏi Thích ứng (Recommendation Engine)
    */
@@ -253,26 +292,26 @@ export class AdaptiveLearningEngine {
     masteries: Record<string, StudentMastery>,
     availableQuestions: Question[] = SAMPLE_QUESTION_BANK,
     limit: number = 5,
-    excludeQuestionIds: string[] = []
+    excludeQuestionIds: string[] = [],
+    learningMode: LearningMode = 'smart_review'
   ): AdaptiveRecommendation[] {
     const candidates = availableQuestions.filter((q) => !excludeQuestionIds.includes(q.id));
 
-    const scored = candidates.map((q) => {
-      const mastery = masteries[q.conceptId]?.masteryScore ?? 0.5;
+    const scored = candidates.map((q, originalIndex) => {
+      const verifiedMastery = getVerifiedMastery(masteries, q.conceptId);
+      const mastery = verifiedMastery?.masteryScore ?? 0.5;
       const concept = CONCEPTS_LIST.find((c) => c.id === q.conceptId);
       const importance = concept?.importanceWeight ?? 0.8;
 
-      // 1. Weakness Score (Càng yếu điểm càng cao)
-      const weaknessScore = 1.0 - mastery;
+      // Unmeasured concepts receive a neutral score; this is not a measured weakness.
+      const weaknessScore = verifiedMastery ? 1.0 - mastery : 0.5;
 
-      // 2. Recency Score (Đã lâu chưa ôn hoặc đến hạn spaced repetition)
+      // Missing local evidence is unknown, not proof the student has never practiced.
       let recencyScore = 0.5;
-      const lastPracticed = masteries[q.conceptId]?.lastPracticedAt;
+      const lastPracticed = verifiedMastery?.lastPracticedAt;
       if (lastPracticed) {
         const daysSince = (Date.now() - new Date(lastPracticed).getTime()) / (1000 * 3600 * 24);
         recencyScore = Math.min(1.0, daysSince / 4);
-      } else {
-        recencyScore = 0.9; // Chưa bao giờ làm
       }
 
       // 3. Difficulty Fit (Vùng phát triển gần nhất ZPD)
@@ -287,10 +326,16 @@ export class AdaptiveLearningEngine {
         0.2 * recencyScore +
         0.15 * importance;
 
-      // Xây dựng lời giải thích tường minh (Explainability for students; underlying logic: ZPD & Ebbinghaus curve)
+      // Explain recommendations according to evidence and the selected strategy.
       let explanationText = '';
-      if (mastery < 0.5) {
-        explanationText = `Khái niệm "${concept?.name}" của bạn hiện đạt ${Math.round(mastery * 100)}% (thuộc nhóm điểm cần củng cố). Câu hỏi này ở mức ${q.difficulty === 'easy' ? 'Cơ bản' : 'Vừa sức'} giúp bạn xây dựng nền tảng vững chắc.`;
+      if (!verifiedMastery) {
+        explanationText = learningMode === 'structured'
+          ? `Bài luyện theo trình tự chương trình ở chuyên đề "${concept?.name}". Chưa có dữ liệu học tập gắn với tài khoản này để đánh giá mức độ nắm vững.`
+          : `Bài luyện làm quen với chuyên đề "${concept?.name}". Chưa có dữ liệu học tập gắn với tài khoản này để đánh giá mức độ nắm vững.`;
+      } else if (learningMode === 'focus_weak') {
+        explanationText = `Ưu tiên luyện tập "${concept?.name}" dựa trên kết quả thực hành đã ghi nhận (${Math.round(mastery * 100)}% mức làm chủ ước tính).`;
+      } else if (learningMode === 'structured') {
+        explanationText = `Tiếp tục theo trình tự chương trình tại chuyên đề "${concept?.name}".`;
       } else if (recencyScore > 0.7) {
         // Ebbinghaus spaced repetition memory retention
         explanationText = `Bạn đã lâu chưa ôn lại chuyên đề "${concept?.name}". Ôn tập định kỳ giúp bạn ghi nhớ sâu và phản xạ nhanh hơn trong phòng thi.`;
@@ -302,6 +347,9 @@ export class AdaptiveLearningEngine {
       return {
         question: q,
         score: finalScore,
+        verifiedMastery,
+        importance,
+        originalIndex,
         reasons: {
           weaknessScore,
           recencyScore,
@@ -312,38 +360,83 @@ export class AdaptiveLearningEngine {
       };
     });
 
-    // Sắp xếp điểm ưu tiên từ cao xuống thấp
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    scored.sort((a, b) => {
+      if (learningMode === 'structured') {
+        const indexA = CONCEPTS_LIST.findIndex((concept) => concept.id === a.question.conceptId);
+        const indexB = CONCEPTS_LIST.findIndex((concept) => concept.id === b.question.conceptId);
+        if (indexA !== indexB) return indexA - indexB;
+        const difficultyOrder = { easy: 0, medium: 1, hard: 2 };
+        const difficultyDiff = difficultyOrder[a.question.difficulty] -
+          difficultyOrder[b.question.difficulty];
+        return difficultyDiff || a.originalIndex - b.originalIndex;
+      }
+      if (learningMode === 'focus_weak') {
+        if (a.verifiedMastery && b.verifiedMastery) {
+          return a.verifiedMastery.masteryScore - b.verifiedMastery.masteryScore;
+        }
+        if (a.verifiedMastery) return -1;
+        if (b.verifiedMastery) return 1;
+        return b.importance - a.importance || b.score - a.score;
+      }
+      return b.score - a.score;
+    });
+    return scored.slice(0, limit).map(({ question, score, reasons }) => ({
+      question,
+      score,
+      reasons,
+    }));
   }
 
   /**
    * Tạo Lộ trình Học tập Cá nhân hóa 7 ngày (7-Day Adaptive Learning Roadmap)
    */
   public static generate7DayLearningPath(
-    masteries: Record<string, StudentMastery>
+    masteries: Record<string, StudentMastery>,
+    learningMode: LearningMode = 'smart_review'
   ): LearningPathDay[] {
-    // Sắp xếp các khái niệm từ yếu nhất đến mạnh nhất
+    // Each mode only changes prioritization; the curriculum and daily schedule remain shared.
     const sortedConcepts = [...CONCEPTS_LIST].sort((a, b) => {
-      const scoreA = masteries[a.id]?.masteryScore ?? 0.5;
-      const scoreB = masteries[b.id]?.masteryScore ?? 0.5;
-      return scoreA - scoreB;
+      const masteryA = getVerifiedMastery(masteries, a.id);
+      const masteryB = getVerifiedMastery(masteries, b.id);
+      if (learningMode === 'structured') {
+        return CONCEPTS_LIST.indexOf(a) - CONCEPTS_LIST.indexOf(b);
+      }
+      if (learningMode === 'smart_review') {
+        if (masteryA && masteryB) {
+          return new Date(masteryA.nextSpacedReviewAt).getTime() -
+            new Date(masteryB.nextSpacedReviewAt).getTime();
+        }
+        if (masteryA) return -1;
+        if (masteryB) return 1;
+        return CONCEPTS_LIST.indexOf(a) - CONCEPTS_LIST.indexOf(b);
+      }
+      if (masteryA && masteryB) return masteryA.masteryScore - masteryB.masteryScore;
+      if (masteryA) return -1;
+      if (masteryB) return 1;
+      return b.importanceWeight - a.importanceWeight;
     });
 
     const path: LearningPathDay[] = [];
     const titles = [
-      'Củng cố Lỗ hổng Cốt lõi',
-      'Luyện phản xạ Khái niệm',
-      'Đột phá Kỹ năng Vận dụng',
-      'Giải quyết Bẫy đề thi THPT',
-      'Thực hành Tổng hợp Đa chuyên đề',
-      'Ôn tập Ngắt quãng Ebbinghaus',
-      'Mini Assessment - Đo lường Tiến bộ',
+      'Học kiến thức cốt lõi',
+      'Luyện tập khái niệm',
+      'Thực hành kỹ năng vận dụng',
+      'Luyện tập dạng câu hỏi',
+      'Thực hành tổng hợp',
+      'Ôn tập theo chuyên đề',
+      'Tự đánh giá kiến thức',
     ];
 
     for (let day = 1; day <= 7; day++) {
       const concept = sortedConcepts[(day - 1) % sortedConcepts.length];
-      const currentScore = Math.round((masteries[concept.id]?.masteryScore ?? 0.5) * 100);
+      const mastery = getVerifiedMastery(masteries, concept.id);
+      const learningGoal = learningMode === 'structured'
+        ? `Học theo trình tự chương trình tại chuyên đề ${concept.topicName}.`
+        : learningMode === 'focus_weak' && mastery
+          ? `Ưu tiên củng cố chuyên đề ${concept.topicName} dựa trên kết quả đã ghi nhận.`
+          : learningMode === 'smart_review' && mastery
+            ? `Ôn lại chuyên đề ${concept.topicName} theo lịch ôn tập đã ghi nhận.`
+            : `Luyện tập chuyên đề ${concept.topicName} để bổ sung dữ liệu học tập gắn với tài khoản này.`;
 
       path.push({
         dayNumber: day,
@@ -353,7 +446,7 @@ export class AdaptiveLearningEngine {
         targetMinutes: day === 7 ? 25 : 15,
         status: day === 1 ? 'in_progress' : 'upcoming',
         questionCount: day === 7 ? 10 : 5,
-        learningGoal: `Nâng mức làm chủ từ ${currentScore}% lên mục tiêu ${Math.min(95, currentScore + 15)}% với trọng tâm chuyên đề ${concept.topicName}.`,
+        learningGoal,
       });
     }
 

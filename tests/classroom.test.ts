@@ -119,6 +119,22 @@ test('joinClassroom normalizes code case and returns classroom UUID', async () =
   assert.equal(classroomId, '31000000-0000-0000-0000-000000000001');
 });
 
+test('joinClassroom accepts wrapped object payloads and validation guards malformed values', async () => {
+  const wrappedClient = mockClientWithRpc(async () => ({
+    data: [{ classroom_id: '31000000-0000-0000-0000-000000000002' }],
+    error: null,
+  }));
+
+  const result = await joinClassroom(wrappedClient, 'd'.repeat(48));
+  assert.equal(result, '31000000-0000-0000-0000-000000000002');
+
+  assert.match(validateClassroomName(null as unknown as string) ?? '', /1 đến 120/);
+  assert.match(validateInvitationCode(undefined as unknown as string) ?? '', /48 ký tự thập lục phân/);
+  assert.equal(validateClassroomGrade('11'), null);
+  assert.equal(validateMaxUses('50'), null);
+  assert.match(validateMaxUses('0') ?? '', /1 đến 500/);
+});
+
 test('leaveClassroom, removeClassroomStudent, archiveClassroom, revokeClassroomInvitation pass correct RPC parameters', async () => {
   const calls: { name: string; args?: Record<string, unknown> }[] = [];
   const client = mockClientWithRpc(async (name, args) => {

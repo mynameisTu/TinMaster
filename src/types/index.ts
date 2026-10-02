@@ -38,7 +38,6 @@ export interface UserProfile {
   xp: number;
   streakDays: number;
   targetScore: number;
-  estimatedScore?: number;
   completedQuestionsCount: number;
   totalStudyMinutes: number;
 }
@@ -238,6 +237,13 @@ export interface AdaptiveRecommendation {
     importanceScore: number;
     textExplanation: string;
   };
+}
+
+export interface AdaptivePracticeResult {
+  question: Question;
+  isCorrect: boolean;
+  scoreRatio: number;
+  activeTimeSec: number;
 }
 
 export interface LearningPathDay {
