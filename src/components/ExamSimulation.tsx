@@ -37,13 +37,18 @@ export const ExamSimulation: React.FC<ExamSimulationProps> = ({
   onFinishExam,
   onCancelExam,
 }) => {
-  const totalSeconds = blueprint.durationMinutes * 60;
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(totalSeconds);
+  const rawMinutes = Number(
+  blueprint.durationMinutes ?? (blueprint as any).duration_minutes
+);
+const totalSeconds = (Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : 50) * 60;
+const [secondsRemaining, setSecondsRemaining] = useState<number>(totalSeconds);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [flagged, setFlagged] = useState<Record<string, boolean>>({});
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
-
+  const endTimeRef = useRef<number>(Date.now() + totalSeconds * 1000);
+  const submitRef = useRef<() => void>(() => {});
+  const submittedRef = useRef<boolean>(false);
   // Telemetry references
   const telemetriesRef = useRef<Record<string, Partial<QuestionAttemptTelemetry>>>({});
   const questionStartTimeRef = useRef<number>(Date.now());
@@ -84,20 +89,18 @@ export const ExamSimulation: React.FC<ExamSimulationProps> = ({
   }, [currentIndex, currentQuestion]);
 
   // 50-minute Countdown Timer
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSecondsRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          handleSubmitExam();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
+ useEffect(() => {
+  const id = setInterval(() => {
+    const left = Math.max(0, Math.round((endTimeRef.current - Date.now()) / 1000));
+    setSecondsRemaining(left);
+    if (left === 0 && !submittedRef.current) {
+      submittedRef.current = true;
+      clearInterval(id);
+      submitRef.current();
+    }
+  }, 1000);
+  return () => clearInterval(id);
+}, []);
 
   // Format timer MM:SS
   const minutes = Math.floor(secondsRemaining / 60);
@@ -181,7 +184,8 @@ export const ExamSimulation: React.FC<ExamSimulationProps> = ({
 
   const answeredCount = questions.filter((q) => isQuestionAnswered(q)).length;
 
-  const handleSubmitExam = () => {
+const handleSubmitExam = () => {
+  submittedRef.current = true;
     // Finalize time for current question
     const elapsed = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
     if (currentQuestion && telemetriesRef.current[currentQuestion.id]) {
@@ -226,7 +230,7 @@ export const ExamSimulation: React.FC<ExamSimulationProps> = ({
 
     onFinishExam(session);
   };
-
+  submitRef.current = handleSubmitExam;
   if (!currentQuestion) return null;
 
   const isCurrentFlagged = !!flagged[currentQuestion.id];
