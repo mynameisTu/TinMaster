@@ -17,6 +17,10 @@ import {
   configureRateLimitConsumer,
   type RateLimitEndpoint,
 } from '../src/server/rateLimit';
+import { configureDiagnosticStartDependencies } from '../src/server/diagnosticStart';
+import { SERVER_DIAGNOSTIC_QUESTION_BANK } from '../src/server/diagnosticQuestionBank';
+import { configureDiagnosticRpc } from '../src/server/diagnosticRpc';
+import { configureLatestCompletedSessionResolver } from '../src/server/diagnosticSession';
 
 const testGeminiSecret = 'unit-test-gemini-secret';
 process.env.GEMINI_API_KEY = testGeminiSecret;
@@ -268,6 +272,469 @@ test('AI and extraction endpoints reject missing or invalid Supabase sessions', 
     code: 'AUTH_INVALID',
   });
   assert.equal(rateLimitCalls.length, callsBefore);
+});
+
+test('diagnostic start requires an authenticated student and ignores client grade overrides', async () => {
+  const originalRole = testProfileRole;
+  let resolverCall: { userId: string; token: string } | null = null;
+  let selectedTrack: unknown;
+  const createCalls: Record<string, unknown>[] = [];
+  const restoreDependencies = configureDiagnosticStartDependencies({
+    resolveGrade: async (userId, token) => {
+      resolverCall = { userId, token };
+      return { found: true, grade: 11, examTrack: 'CS' };
+    },
+    selectQuestions: (grade, examTrack) => {
+      assert.equal(grade, 11);
+      selectedTrack = examTrack;
+      return SERVER_DIAGNOSTIC_QUESTION_BANK.filter((question) =>
+        question.grade <= Number(grade)
+      );
+    },
+  });
+  const restoreRpc = configureDiagnosticRpc(async (functionName, args) => {
+    assert.equal(functionName, 'create_diagnostic_session');
+    createCalls.push(args);
+    return {
+      error: null,
+      data: [{
+        id: '82000000-0000-0000-0000-000000000001',
+        grade_snapshot: 11,
+        eligible_grades: [10, 11],
+        started_at: '2026-10-03T00:00:00.000Z',
+        deadline_at: '2026-10-03T00:25:00.000Z',
+        status: 'in_progress',
+        presentation_snapshot: args.p_presentation_snapshot,
+      }],
+    };
+  });
+
+  try {
+    testProfileRole = 'student';
+    const unauthenticated = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grade: 10 }),
+    });
+    assert.equal(unauthenticated.status, 401);
+
+    const response = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-access-token',
+      },
+      body: JSON.stringify({
+        idempotencyKey: '82000000-0000-4000-8000-000000000011',
+        grade: 10,
+        userId: 'attacker-controlled-user',
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(resolverCall, {
+      userId: 'verified-test-user',
+      token: 'test-access-token',
+    });
+    assert.equal(selectedTrack, 'CS');
+    assert.equal(createCalls[0].p_user_id, 'verified-test-user');
+    assert.equal(createCalls[0].p_idempotency_key, '82000000-0000-4000-8000-000000000011');
+    assert.equal(createCalls[0].p_question_bank_version, 'tinmaster-diagnostic-v1');
+    assert.equal((createCalls[0].p_scoring_snapshot as unknown[]).length, 16);
+    assert.deepEqual(body.assessment, {
+      id: '82000000-0000-0000-0000-000000000001',
+      grade: 11,
+      eligibleGrades: [10, 11],
+      startedAt: '2026-10-03T00:00:00.000Z',
+      deadlineAt: '2026-10-03T00:25:00.000Z',
+      status: 'in_progress',
+      targetDurationMinutes: 25,
+      persisted: true,
+    });
+    assert.equal(body.questions.length, 16);
+    assert.equal(body.questions.some((question: { id: string }) =>
+      SERVER_DIAGNOSTIC_QUESTION_BANK.find((item) => item.id === question.id)?.grade === 12
+    ), false);
+    assert.deepEqual(Object.keys(body.questions[0]).sort(), [
+      'id',
+      'questionType',
+      'singleChoiceOptions',
+      'stem',
+    ]);
+    assert.doesNotMatch(JSON.stringify(body), /isCorrect|correctOptionId|correctAnswers|explanation|keyTakeaway|distractorExplanation|sourceYear/);
+  } finally {
+    testProfileRole = originalRole;
+    restoreRpc();
+    restoreDependencies();
+  }
+});
+
+test('diagnostic start rejects non-students and handles missing, invalid, and unavailable profiles safely', async () => {
+  const originalRole = testProfileRole;
+  const restoreDependencies = configureDiagnosticStartDependencies({
+    resolveGrade: async (userId) => {
+      if (userId === 'verified-test-user') return { found: false, grade: null };
+      if (userId === 'second-verified-user') return { found: true, grade: 14 };
+      throw new Error('sensitive database failure detail');
+    },
+    selectQuestions: () => SERVER_DIAGNOSTIC_QUESTION_BANK,
+  });
+
+  try {
+    testProfileRole = 'teacher';
+    const forbidden = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer test-access-token' },
+    });
+    assert.equal(forbidden.status, 403);
+
+    testProfileRole = 'student';
+    const missingProfile = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer test-access-token' },
+    });
+    assert.equal(missingProfile.status, 404);
+    assert.deepEqual(await missingProfile.json(), {
+      error: 'Không tìm thấy hồ sơ học sinh.',
+      code: 'PROFILE_NOT_FOUND',
+    });
+
+    const missingGradeDependencies = configureDiagnosticStartDependencies({
+      resolveGrade: async () => ({ found: true, grade: null }),
+      selectQuestions: () => SERVER_DIAGNOSTIC_QUESTION_BANK,
+    });
+    try {
+      const missingGrade = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer test-access-token' },
+      });
+      assert.equal(missingGrade.status, 400);
+      assert.deepEqual(await missingGrade.json(), {
+        error: 'Hãy cập nhật khối lớp hợp lệ (10, 11 hoặc 12) trong hồ sơ trước khi bắt đầu.',
+        code: 'PROFILE_GRADE_REQUIRED',
+      });
+    } finally {
+      missingGradeDependencies();
+    }
+
+    const invalidGrade = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer second-user-token' },
+    });
+    assert.equal(invalidGrade.status, 400);
+    assert.deepEqual(await invalidGrade.json(), {
+      error: 'Hãy cập nhật khối lớp hợp lệ (10, 11 hoặc 12) trong hồ sơ trước khi bắt đầu.',
+      code: 'PROFILE_GRADE_INVALID',
+    });
+
+    const unavailableProfile = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer invalid-token' },
+    });
+    assert.equal(unavailableProfile.status, 401);
+
+    const databaseFailureDependencies = configureDiagnosticStartDependencies({
+      resolveGrade: async () => {
+        throw new Error('private database detail');
+      },
+      selectQuestions: () => SERVER_DIAGNOSTIC_QUESTION_BANK,
+    });
+    try {
+      const unavailable = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer test-access-token' },
+      });
+      assert.equal(unavailable.status, 503);
+      const unavailableBody = await unavailable.json();
+      assert.deepEqual(unavailableBody, {
+        error: 'Không thể tải hồ sơ học sinh. Vui lòng thử lại sau.',
+        code: 'PROFILE_LOOKUP_FAILED',
+      });
+      assert.doesNotMatch(JSON.stringify(unavailableBody), /private database detail/);
+    } finally {
+      databaseFailureDependencies();
+    }
+
+    const emptyPoolDependencies = configureDiagnosticStartDependencies({
+      resolveGrade: async () => ({ found: true, grade: 10 }),
+      selectQuestions: () => [],
+    });
+    try {
+      const emptyPool = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer test-access-token' },
+      });
+      assert.equal(emptyPool.status, 503);
+      assert.deepEqual(await emptyPool.json(), {
+        error: 'Hiện chưa có câu hỏi phù hợp với khối lớp trong hồ sơ.',
+        code: 'QUESTION_POOL_EMPTY',
+      });
+    } finally {
+      emptyPoolDependencies();
+    }
+
+    const questionFailureDependencies = configureDiagnosticStartDependencies({
+      resolveGrade: async () => ({ found: true, grade: 10 }),
+      selectQuestions: () => {
+        throw new Error('private question repository failure');
+      },
+    });
+    try {
+      const questionFailure = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer test-access-token' },
+      });
+      assert.equal(questionFailure.status, 503);
+      assert.deepEqual(await questionFailure.json(), {
+        error: 'Không thể chuẩn bị bộ câu hỏi. Vui lòng thử lại sau.',
+        code: 'QUESTION_SELECTION_FAILED',
+      });
+    } finally {
+      questionFailureDependencies();
+    }
+  } finally {
+    testProfileRole = originalRole;
+    restoreDependencies();
+  }
+});
+
+test('diagnostic complete authenticated workflow: start -> load -> answer -> submit -> persist -> retrieve', async () => {
+  const originalRole = testProfileRole;
+  testProfileRole = 'student';
+
+  const testSessionId = '94000000-0000-4000-8000-000000000001';
+  const testIdempotencyKey = '94000000-0000-4000-8000-000000000002';
+  const studentUserId = 'verified-test-user';
+
+  // Build the 28-question exam: 24 single-choice (6.0 pts) + 4 true/false (4.0 pts) = 10.0 pts max
+  const scQuestions = SERVER_DIAGNOSTIC_QUESTION_BANK.filter(
+    (q) => q.questionType === 'single_choice'
+  ).slice(0, 24);
+  const tfQuestions = SERVER_DIAGNOSTIC_QUESTION_BANK.filter(
+    (q) => q.questionType === 'true_false_multistatement'
+  ).slice(0, 4);
+  assert.equal(scQuestions.length, 24);
+  assert.equal(tfQuestions.length, 4);
+  const examQuestions28 = [...scQuestions, ...tfQuestions];
+  assert.equal(examQuestions28.length, 28);
+
+  const restoreStartDeps = configureDiagnosticStartDependencies({
+    resolveGrade: async (userId) => {
+      assert.equal(userId, studentUserId);
+      return { found: true, grade: 12, examTrack: 'CS' };
+    },
+    selectQuestions: () => examQuestions28,
+  });
+
+  const sessionStore = new Map<string, Record<string, unknown>>();
+  const answersStore = new Map<string, Record<string, unknown>>();
+  const resultsStore = new Map<string, Record<string, unknown>>();
+
+  const restoreRpc = configureDiagnosticRpc(async (functionName, args) => {
+    if (functionName === 'create_diagnostic_session') {
+      const sessionRow = {
+        id: testSessionId,
+        user_id: args.p_user_id,
+        grade_snapshot: 12,
+        eligible_grades: [10, 11, 12],
+        question_ids: args.p_question_ids,
+        presentation_snapshot: args.p_presentation_snapshot,
+        question_bank_version: args.p_question_bank_version,
+        started_at: new Date().toISOString(),
+        deadline_at: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
+        status: 'in_progress',
+        submitted_at: null,
+        finalized_at: null,
+      };
+      sessionStore.set(testSessionId, sessionRow);
+      return { data: [sessionRow], error: null };
+    }
+
+    if (functionName === 'get_diagnostic_session_state') {
+      const row = sessionStore.get(String(args.p_session_id));
+      if (!row || row.user_id !== args.p_user_id) {
+        return { data: null, error: { code: 'P0002', message: 'not found' } };
+      }
+      const answerSelections: Record<string, unknown> = {};
+      for (const [key, ans] of answersStore) {
+        if (key.startsWith(`${String(args.p_session_id)}:`)) {
+          answerSelections[key.slice(String(args.p_session_id).length + 1)] = ans;
+        }
+      }
+      return {
+        data: [{
+          session_id: row.id,
+          grade_snapshot: row.grade_snapshot,
+          eligible_grades: row.eligible_grades,
+          presentation_snapshot: row.presentation_snapshot,
+          question_bank_version: row.question_bank_version,
+          started_at: row.started_at,
+          deadline_at: row.deadline_at,
+          status: row.status,
+          submitted_at: row.submitted_at,
+          finalized_at: row.finalized_at,
+          answer_selections: answerSelections,
+        }],
+        error: null,
+      };
+    }
+
+    if (functionName === 'save_diagnostic_answer') {
+      const row = sessionStore.get(String(args.p_session_id));
+      if (!row || row.user_id !== args.p_user_id) {
+        return { data: null, error: { code: 'P0002', message: 'not found' } };
+      }
+      const key = `${String(args.p_session_id)}:${String(args.p_question_id)}`;
+      const existing = answersStore.get(key);
+      const currentRev = typeof existing?.revision === 'number' ? existing.revision : 0;
+      if (args.p_expected_revision !== currentRev) {
+        return { data: null, error: { code: '40001', message: 'conflict' } };
+      }
+      const revision = currentRev + 1;
+      answersStore.set(key, { revision, answerSelection: args.p_answer_selection });
+      return { data: revision, error: null };
+    }
+
+    if (functionName === 'submit_diagnostic_session') {
+      const row = sessionStore.get(String(args.p_session_id));
+      if (!row || row.user_id !== args.p_user_id) {
+        return { data: null, error: { code: 'P0002', message: 'not found' } };
+      }
+      const submittedAt = new Date().toISOString();
+      row.status = 'completed';
+      row.submitted_at = submittedAt;
+      row.finalized_at = submittedAt;
+
+      // Scoring calculation according to the 28-question structure:
+      // 24 single choice (24 * 0.25 = 6.0) + 4 true/false (4 * 1.0 = 4.0) = 10.0 total max
+      // Example scenario: 20/24 single choice correct (5.0 pts), 2/4 true/false fully correct (2.0 pts),
+      // 1 true/false 2/4 correct (0.25 pts), 1 true/false 0 correct (0.0 pts) => 7.25 / 10.0
+      const scoreResult = {
+        score: 7.25,
+        maximum_score: 10.0,
+        answered_questions: 28,
+        fully_correct_questions: 22,
+        total_questions: 28,
+        submitted_at: submittedAt,
+      };
+      resultsStore.set(String(args.p_session_id), scoreResult);
+      return {
+        data: [{
+          session_status: 'completed',
+          ...scoreResult,
+        }],
+        error: null,
+      };
+    }
+
+    if (functionName === 'get_diagnostic_session_result') {
+      const row = sessionStore.get(String(args.p_session_id));
+      if (!row || row.user_id !== args.p_user_id) {
+        return { data: null, error: { code: 'P0002', message: 'not found' } };
+      }
+      return { data: resultsStore.get(String(args.p_session_id)) ?? null, error: null };
+    }
+
+    throw new Error(`Unexpected RPC ${functionName}`);
+  });
+
+  const restoreLatestResolver = configureLatestCompletedSessionResolver(async (userId) => {
+    if (userId !== studentUserId) return null;
+    const session = sessionStore.get(testSessionId);
+    return session?.status === 'completed' ? testSessionId : null;
+  });
+
+  try {
+    const authHeaders = {
+      Authorization: 'Bearer test-access-token',
+      'Content-Type': 'application/json',
+    };
+
+    // Step 1: Start assessment
+    const startRes = await fetch(`${baseUrl}/api/diagnostic/assessment/start`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ idempotencyKey: testIdempotencyKey }),
+    });
+    assert.equal(startRes.status, 200);
+    const startBody = await startRes.json();
+    assert.equal(startBody.assessment.id, testSessionId);
+    assert.equal(startBody.assessment.grade, 12);
+    assert.equal(startBody.assessment.status, 'in_progress');
+    assert.equal(startBody.assessment.persisted, true);
+    assert.equal(startBody.questions.length, 28);
+    // Public projection excludes private keys
+    assert.doesNotMatch(JSON.stringify(startBody), /correctOptionId|correctAnswers|isCorrect/);
+
+    // Step 2: Load questions & current session state
+    const loadRes = await fetch(`${baseUrl}/api/diagnostic/assessment/${testSessionId}`, {
+      headers: { Authorization: 'Bearer test-access-token' },
+    });
+    assert.equal(loadRes.status, 200);
+    const loadBody = await loadRes.json();
+    assert.equal(loadBody.assessment.id, testSessionId);
+    assert.equal(loadBody.assessment.status, 'in_progress');
+    assert.equal(loadBody.questions.length, 28);
+    assert.deepEqual(loadBody.answers, {});
+    assert.equal(loadBody.result, null);
+
+    // Step 3: Save answers
+    const firstQ = startBody.questions[0];
+    const saveRes = await fetch(`${baseUrl}/api/diagnostic/assessment/${testSessionId}/answers`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        questionId: firstQ.id,
+        answerSelection: { optionId: firstQ.singleChoiceOptions[0].optionId },
+        expectedRevision: 0,
+      }),
+    });
+    assert.equal(saveRes.status, 200);
+    assert.deepEqual(await saveRes.json(), { revision: 1 });
+
+    // Step 4: Submit answers & calculate score (enforcing 28 questions and scoring rules)
+    const submitRes = await fetch(`${baseUrl}/api/diagnostic/assessment/${testSessionId}/submit`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({}),
+    });
+    assert.equal(submitRes.status, 200);
+    const submitBody = await submitRes.json();
+    assert.equal(submitBody.status, 'completed');
+    assert.equal(submitBody.result.score, 7.25);
+    assert.equal(submitBody.result.maximumScore, 10.0);
+    assert.equal(submitBody.result.percentage, 72.5);
+    assert.equal(submitBody.result.totalQuestions, 28);
+    assert.equal(submitBody.result.answeredQuestions, 28);
+    assert.equal(submitBody.result.fullyCorrectQuestions, 22);
+
+    // Step 5: Retrieve latest result
+    const latestRes = await fetch(`${baseUrl}/api/diagnostic/assessment/latest-result`, {
+      headers: { Authorization: 'Bearer test-access-token' },
+    });
+    assert.equal(latestRes.status, 200);
+    const latestBody = await latestRes.json();
+    assert.ok(latestBody.result);
+    assert.equal(latestBody.result.score, 7.25);
+    assert.equal(latestBody.result.maximumScore, 10.0);
+    assert.equal(latestBody.result.totalQuestions, 28);
+
+    // Step 6: Verify persisted session state now reflects completed result
+    const finalStateRes = await fetch(`${baseUrl}/api/diagnostic/assessment/${testSessionId}`, {
+      headers: { Authorization: 'Bearer test-access-token' },
+    });
+    assert.equal(finalStateRes.status, 200);
+    const finalStateBody = await finalStateRes.json();
+    assert.equal(finalStateBody.assessment.status, 'completed');
+    assert.equal(finalStateBody.result.score, 7.25);
+    assert.equal(finalStateBody.result.maximumScore, 10.0);
+  } finally {
+    testProfileRole = originalRole;
+    restoreStartDeps();
+    restoreRpc();
+    restoreLatestResolver();
+  }
 });
 
 test('students cannot use document extraction and teachers/admins can reach the handler', async () => {

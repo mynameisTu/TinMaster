@@ -26,6 +26,13 @@ export function validateTargetScore(targetScore: number): string | null {
   return null;
 }
 
+export type StudentGrade = 10 | 11 | 12;
+export const STUDENT_GRADE_OPTIONS: readonly StudentGrade[] = [10, 11, 12];
+
+export function validateStudentGrade(grade: unknown): grade is StudentGrade {
+  return STUDENT_GRADE_OPTIONS.some((option) => option === grade);
+}
+
 const PASSWORD_AUTH_MAX_AGE_SECONDS = 15 * 60;
 const PROFILE_COLUMNS =
   'id,email,display_name,avatar_url,role,school,grade,exam_track,target_score';
@@ -120,6 +127,112 @@ export async function updateMyTargetScore(
     throw new Error('Không thể xác nhận điểm mục tiêu đã lưu.');
   }
   return savedScore;
+}
+
+export async function updateMyStudentGrade(
+  client: SupabaseClient,
+  grade: unknown
+): Promise<StudentGrade | null> {
+  const isUnset = grade === null || grade === '';
+  if (!isUnset && !validateStudentGrade(grade)) {
+    throw new Error('Khối lớp phải là 10, 11 hoặc 12.');
+  }
+
+  const targetGrade: StudentGrade | null = isUnset ? null : (grade as StudentGrade);
+  let rpcFailedWithMissing = false;
+
+  try {
+    const { data: rpcData, error: rpcError } = await client.rpc('update_my_student_grade', {
+      p_grade: targetGrade,
+    });
+
+    if (!rpcError) {
+      if (targetGrade === null) {
+        return null;
+      }
+      const savedGrade = typeof rpcData === 'number' ? rpcData : Number(rpcData);
+      if (!validateStudentGrade(savedGrade) || savedGrade !== targetGrade) {
+        throw new Error('Không thể xác nhận khối lớp đã lưu.');
+      }
+      return savedGrade;
+    }
+
+    if (rpcError.code === '42501') {
+      throw new Error('Chỉ tài khoản học sinh mới có thể cập nhật khối lớp của mình.');
+    }
+    if (
+      rpcError.code === 'P0001' &&
+      rpcError.details?.includes('PROFILE_RATE_LIMIT')
+    ) {
+      throw new Error('Bạn đã cập nhật hồ sơ quá thường xuyên. Vui lòng thử lại sau.');
+    }
+    if (rpcError.code === 'PGRST202' || rpcError.code === '42883') {
+      rpcFailedWithMissing = true;
+    } else {
+      throw new Error('Không thể lưu khối lớp. Vui lòng thử lại.');
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('quá thường xuyên') ||
+        error.message.includes('Chỉ tài khoản học sinh') ||
+        error.message.includes('Khối lớp phải là'))
+    ) {
+      throw error;
+    }
+    rpcFailedWithMissing = true;
+  }
+
+  // Fallback path:
+  // When the RPC is absent (PGRST202 / 42883) or fails,
+  // attempt a direct table update. Note: migrations after 20260927160000
+  // revoke direct UPDATE on public.profiles from authenticated, so this
+  // fallback will itself fail with 42501 on up-to-date databases. In that
+  // case we skip the fallback and fall through to the "migration not applied"
+  // error below which is the correct message.
+  if (typeof client?.from === 'function' && !rpcFailedWithMissing) {
+    try {
+      const userResult = await client.auth?.getUser?.();
+      const userId = userResult?.data?.user?.id;
+      if (userId) {
+        const { data: updateData, error: updateError } = await client
+          .from('profiles')
+          .update({ grade: targetGrade })
+          .eq('id', userId)
+          .select('grade')
+          .single();
+
+        if (updateError) {
+          if (updateError.code === '42501') {
+            throw new Error('Chỉ tài khoản học sinh mới có thể cập nhật khối lớp của mình.');
+          }
+          throw new Error('Không thể lưu khối lớp. Vui lòng thử lại.');
+        }
+
+        if (targetGrade === null) {
+          return null;
+        }
+        const rawGrade = updateData?.grade;
+        const fallbackGrade = typeof rawGrade === 'number' ? rawGrade : Number(rawGrade);
+        if (!validateStudentGrade(fallbackGrade) || fallbackGrade !== targetGrade) {
+          throw new Error('Không thể xác nhận khối lớp đã lưu.');
+        }
+        return fallbackGrade;
+      }
+    } catch (fallbackError) {
+      if (fallbackError instanceof Error && (fallbackError.message.includes('Chỉ tài khoản') || fallbackError.message.includes('Không thể xác nhận'))) {
+        throw fallbackError;
+      }
+    }
+  }
+
+  if (rpcFailedWithMissing) {
+    throw new Error(
+      'Cơ sở dữ liệu chưa có chức năng lưu khối lớp. Cần áp dụng migration 20261003150000_add_student_grade_update_rpc.sql rồi tải lại trang.'
+    );
+  }
+
+  throw new Error('Không thể lưu khối lớp. Vui lòng thử lại.');
 }
 
 export async function signInWithGoogle(client: SupabaseClient): Promise<void> {

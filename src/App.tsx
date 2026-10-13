@@ -39,6 +39,7 @@ import { AdaptivePracticeSession } from './components/AdaptivePracticeSession';
 import { PracticeBankView } from './components/PracticeBankView';
 import { GoogleSignInModal } from './components/GoogleSignInModal';
 import { ExamsCatalogView } from './components/ExamsCatalogView';
+import { DiagnosticAssessment } from './components/DiagnosticAssessment';
 import { SelectTrackModal } from './components/SelectTrackModal';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { TeacherInvitationModal } from './components/TeacherInvitationModal';
@@ -285,6 +286,8 @@ function TinMasterApp() {
   const [videoConceptId, setVideoConceptId] = useState<string | undefined>(undefined);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState<boolean>(false);
   const [showTeacherInvitationModal, setShowTeacherInvitationModal] = useState(false);
+  const [showDiagnosticAssessment, setShowDiagnosticAssessment] = useState(false);
+  const [diagnosticResultRefreshKey, setDiagnosticResultRefreshKey] = useState(0);
   const [showSelectTrackModal, setShowSelectTrackModal] = useState<boolean>(false);
   const [pendingExamStart, setPendingExamStart] = useState<{ blueprint: ExamBlueprint; examItem?: ExamCatalogItem } | null>(null);
 
@@ -833,6 +836,10 @@ function TinMasterApp() {
             canEditTargetScore={Boolean(auth.profile)}
             showStudentLearningControls={user.role === 'student'}
             onStartExam={handleStartExam}
+            onStartDiagnosticAssessment={user.role === 'student' && activeUserId
+              ? () => setShowDiagnosticAssessment(true)
+              : undefined}
+            diagnosticResultRefreshKey={diagnosticResultRefreshKey}
             onStartAdaptivePractice={handleStartAdaptivePractice}
             onStartMicroQuiz={handleStartMicroQuiz}
             onOpenVideoModal={handleOpenVideoModal}
@@ -935,8 +942,10 @@ function TinMasterApp() {
         {activeTab === 'account_settings' && (
           <AccountSettingsPage
             email={auth.profile?.email ?? ''}
+            grade={auth.profile?.grade}
             onBack={() => navigateTo('dashboard')}
             onSaved={handleMemberProfileSaved}
+            onGradeSaved={auth.refreshProfile}
           />
         )}
 
@@ -1007,6 +1016,15 @@ function TinMasterApp() {
         <TeacherInvitationModal
           onClose={() => setShowTeacherInvitationModal(false)}
           onRedeemed={auth.refreshProfile}
+        />
+      )}
+
+      {showDiagnosticAssessment && activeUserId && user.role === 'student' && (
+        <DiagnosticAssessment
+          key={activeUserId}
+          userId={activeUserId}
+          onResultAvailable={() => setDiagnosticResultRefreshKey((key) => key + 1)}
+          onClose={() => setShowDiagnosticAssessment(false)}
         />
       )}
 

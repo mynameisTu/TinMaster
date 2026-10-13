@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { showTargetScoreDialog, StudentDashboard } from '../src/components/StudentDashboard';
+import {
+  DiagnosticCompetencyMetric,
+  showTargetScoreDialog,
+  startDiagnosticAssessmentFlow,
+  StudentDashboard,
+} from '../src/components/StudentDashboard';
 import { createAdaptivePracticeResult } from '../src/components/AdaptivePracticeSession';
 import { KnowledgeMap } from '../src/components/KnowledgeMap';
 import { PracticeBankView } from '../src/components/PracticeBankView';
@@ -30,6 +35,8 @@ import {
 } from '../src/services/learningPreferences';
 import {
   getOrCreateProfile,
+  STUDENT_GRADE_OPTIONS,
+  updateMyStudentGrade,
   updateMyTargetScore,
   validateTargetScore,
 } from '../src/services/authService';
@@ -84,6 +91,7 @@ function renderDashboard(
     canEditTargetScore: true,
     showStudentLearningControls: role === 'student',
     onStartExam: () => {},
+    onStartDiagnosticAssessment: role === 'student' ? () => {} : undefined,
     onStartAdaptivePractice: () => {},
     onStartMicroQuiz: () => {},
     onOpenVideoModal: () => {},
@@ -105,6 +113,7 @@ test('new student has no fabricated mastery and sees empty progress states', () 
   assert.deepEqual(loaded.masteries, {});
   assert.equal(loaded.canPersist, true);
   assert.match(dashboard, /Chưa có mô hình dự đoán được kiểm chứng/);
+  assert.match(dashboard, /Điểm năng lực hiện tại:/);
   assert.match(dashboard, /Đổi mục tiêu/);
   assert.match(dashboard, /id="target-score-dialog"[^>]*aria-labelledby="target-score-dialog-title"/);
   assert.match(dashboard, /Hủy/);
@@ -115,12 +124,55 @@ test('new student has no fabricated mastery and sees empty progress states', () 
   assert.doesNotMatch(map, /Làm chủ: 50%|Độ tin cậy: 30%/);
 });
 
+test('diagnostic competency metric renders empty, loading, error, and valid-result states', () => {
+  const renderMetric = (state: 'loading' | 'empty' | 'ready' | 'error', score: number | null) =>
+    renderToStaticMarkup(createElement(DiagnosticCompetencyMetric, {
+      state,
+      score,
+      onRetry: () => {},
+      canStartAssessment: true,
+      onStartAssessment: () => {},
+    }));
+  const empty = renderMetric('empty', null);
+  assert.match(empty, /Chưa đánh giá/);
+  assert.match(empty, /Làm bài đánh giá/);
+  assert.doesNotMatch(empty, /progressbar/);
+  assert.match(renderMetric('loading', null), /Đang tải/);
+  assert.match(renderMetric('error', null), /Không thể tải/);
+  assert.match(renderMetric('error', null), /Thử lại/);
+  const completed = renderMetric('ready', 7.4);
+  assert.match(completed, /7\.4 \/ 10/);
+  assert.doesNotMatch(completed, /progressbar|Làm bài đánh giá/);
+  const unavailable = renderToStaticMarkup(createElement(DiagnosticCompetencyMetric, {
+    state: 'empty',
+    score: null,
+    onRetry: () => {},
+    canStartAssessment: true,
+  }));
+  assert.match(unavailable, /Làm bài đánh giá/);
+  assert.match(unavailable, /disabled=""/);
+  assert.match(unavailable, /Hãy đăng nhập bằng tài khoản học sinh/);
+});
+
+test('assessment call-to-action invokes the existing flow and handles unavailable wiring', () => {
+  let opened = false;
+  assert.equal(startDiagnosticAssessmentFlow(() => { opened = true; }), true);
+  assert.equal(opened, true);
+  assert.equal(startDiagnosticAssessmentFlow(undefined), false);
+});
+
 test('authenticated student and admin dashboards render target editing controls', () => {
   for (const role of ['student', 'admin'] as const) {
     const dashboard = renderDashboard({}, 0, role);
     assert.match(dashboard, /Mục tiêu điểm thi:[\s\S]*?8\.5 \/ 10[\s\S]*?<button[^>]*aria-haspopup="dialog"/);
     assert.match(dashboard, />Đổi mục tiêu<\/button>/);
     assert.match(dashboard, /id="target-score-dialog"/);
+    assert.match(dashboard, /Điểm năng lực hiện tại:/);
+    if (role === 'admin') {
+      assert.match(dashboard, /Làm bài đánh giá/);
+      assert.match(dashboard, /Bài đánh giá chỉ dành cho tài khoản học sinh/);
+      assert.match(dashboard, /Điểm năng lực hiện tại:[\s\S]*?Chưa đánh giá/);
+    }
   }
 });
 
@@ -460,6 +512,68 @@ test('target scores are restricted to 1.0-10.0 in half-point increments', async 
   await assert.rejects(updateMyTargetScore(client, 8.25), /từ 1\.0 đến 10\.0/);
 });
 
+test('students can update only a valid grade through the self-service RPC', async () => {
+  assert.deepEqual(STUDENT_GRADE_OPTIONS, [10, 11, 12]);
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      calls.push({ name, args });
+      return { data: args.p_grade, error: null };
+    },
+  } as never;
+
+  for (const grade of [10, 11, 12] as const) {
+    assert.equal(await updateMyStudentGrade(client, grade), grade);
+  }
+  assert.equal(await updateMyStudentGrade(client, null), null);
+  assert.deepEqual(calls, ([10, 11, 12, null] as const).map((grade) => ({
+    name: 'update_my_student_grade',
+    args: { p_grade: grade },
+  })));
+
+  for (const grade of [undefined, 9, 13, '10', 10.5]) {
+    await assert.rejects(updateMyStudentGrade(client, grade), /Khối lớp phải là 10, 11 hoặc 12/);
+  }
+  assert.equal(calls.length, 4);
+
+  const deniedClient = {
+    rpc: async () => ({
+      data: null,
+      error: { code: '42501', message: 'permission denied with private details' },
+    }),
+  } as never;
+  await assert.rejects(
+    updateMyStudentGrade(deniedClient, 11),
+    { message: 'Chỉ tài khoản học sinh mới có thể cập nhật khối lớp của mình.' }
+  );
+
+  const missingRpcClient = {
+    rpc: async () => ({
+      data: null,
+      error: { code: 'PGRST202', message: 'function not found' },
+    }),
+  } as never;
+  await assert.rejects(
+    updateMyStudentGrade(missingRpcClient, 11),
+    /Cơ sở dữ liệu chưa có chức năng lưu khối lớp.*20261003150000_add_student_grade_update_rpc\.sql/
+  );
+
+  const rateLimitedClient = {
+    rpc: async () => ({
+      data: null,
+      error: {
+        code: 'P0001',
+        message: 'Profile update limit exceeded',
+        details: 'PROFILE_RATE_LIMIT',
+      },
+    }),
+  } as never;
+  await assert.rejects(
+    updateMyStudentGrade(rateLimitedClient, 11),
+    /cập nhật hồ sơ quá thường xuyên/
+  );
+});
+
 test('target update migration only permits authenticated self target-score writes', () => {
   const migration = readFileSync(
     new URL('../supabase/migrations/20261002220000_update_my_target_score.sql', import.meta.url),
@@ -474,6 +588,22 @@ test('target update migration only permits authenticated self target-score write
   assert.match(migration, /grant execute on function public\.update_my_target_score\(numeric\) to authenticated/i);
   assert.match(migration, /set target_score = p_target_score/i);
   assert.doesNotMatch(migration, /set\s+[^;]*(?:role|email|display_name|school|grade)\s*=/i);
+});
+
+test('student grade update migration is self-scoped and cannot modify roles or unrelated fields', () => {
+  const migration = readFileSync(
+    new URL('../supabase/migrations/20261003150000_add_student_grade_update_rpc.sql', import.meta.url),
+    'utf8'
+  );
+  assert.match(migration, /security definer\s+set search_path = ''\s+set row_security = off/i);
+  assert.match(migration, /auth\.uid\(\) is null/);
+  assert.match(migration, /p_grade is not null and \(?p_grade not between 10 and 12\)?/i);
+  assert.match(migration, /where p\.id = auth\.uid\(\)\s+and p\.role = 'student'/i);
+  assert.match(migration, /set grade = p_grade/i);
+  assert.match(migration, /consume_member_profile_update_limit/);
+  assert.match(migration, /revoke all on function public\.update_my_student_grade\(smallint\) from public, anon/i);
+  assert.match(migration, /grant execute on function public\.update_my_student_grade\(smallint\) to authenticated/i);
+  assert.doesNotMatch(migration, /set\s+(?:role|email|display_name|school|target_score)\s*=/i);
 });
 
 test('learning mode is restored per account and invalid values are preserved', () => {
@@ -498,39 +628,43 @@ test('learning mode is restored per account and invalid values are preserved', (
   assert.equal(loadLearningMode(storage, 'student-invalid').canPersist, false);
 });
 
-test('target score is restored from the authenticated profile for the correct account', async () => {
+test('grade and target score are restored from the authenticated profile for the correct account', async () => {
   const profileUser = {
     id: 'target-owner',
     email: 'target@example.test',
     user_metadata: {},
   } as unknown as import('@supabase/supabase-js').User;
-  const client = {
-    from: (table: string) => {
-      assert.equal(table, 'profiles');
-      return {
-        select: () => ({
-          eq: (_column: string, userId: string) => {
-            assert.equal(userId, profileUser.id);
-            return {
-              maybeSingle: async () => ({
-                data: {
-                  id: userId,
-                  email: profileUser.email,
-                  display_name: 'Target Owner',
-                  role: 'student',
-                  target_score: 7.5,
-                },
-                error: null,
-              }),
-            };
-          },
-        }),
-      };
-    },
-  } as unknown as import('@supabase/supabase-js').SupabaseClient;
-  const restoredProfile = await getOrCreateProfile(client, profileUser);
-  assert.equal(restoredProfile.id, 'target-owner');
-  assert.equal(restoredProfile.targetScore, 7.5);
+  for (const grade of [10, 11, 12] as const) {
+    const gradeClient = {
+      from: (table: string) => {
+        assert.equal(table, 'profiles');
+        return {
+          select: () => ({
+            eq: (_column: string, userId: string) => {
+              assert.equal(userId, profileUser.id);
+              return {
+                maybeSingle: async () => ({
+                  data: {
+                    id: userId,
+                    email: profileUser.email,
+                    display_name: 'Target Owner',
+                    role: 'student',
+                    grade,
+                    target_score: 7.5,
+                  },
+                  error: null,
+                }),
+              };
+            },
+          }),
+        };
+      },
+    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+    const restoredProfile = await getOrCreateProfile(gradeClient, profileUser);
+    assert.equal(restoredProfile.id, 'target-owner');
+    assert.equal(restoredProfile.targetScore, 7.5);
+    assert.equal(restoredProfile.grade, grade);
+  }
 });
 
 test('exam history is isolated by account without migrating or overwriting legacy results', () => {

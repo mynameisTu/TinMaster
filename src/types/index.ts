@@ -107,6 +107,64 @@ export interface TrueFalseStatement {
   explanation: string;
 }
 
+export interface PublicSingleChoiceOption {
+  optionId: string;
+  label: 'A' | 'B' | 'C' | 'D';
+  text: string;
+}
+
+export interface PublicTrueFalseStatement {
+  subOrder: 'a' | 'b' | 'c' | 'd';
+  statementText: string;
+}
+
+interface PublicQuestionPresentationBase {
+  id: string;
+  stem: string;
+  codeSnippet?: {
+    language: 'python' | 'sql' | 'html' | 'css' | 'pseudo';
+    code: string;
+  };
+  diagramDesc?: string;
+}
+
+export interface PublicSingleChoiceQuestionPresentation
+  extends PublicQuestionPresentationBase {
+  questionType: 'single_choice';
+  singleChoiceOptions: PublicSingleChoiceOption[];
+}
+
+export interface PublicTrueFalseQuestionPresentation
+  extends PublicQuestionPresentationBase {
+  questionType: 'true_false_multistatement';
+  trueFalseStatements: PublicTrueFalseStatement[];
+}
+
+export type PublicQuestionPresentation =
+  | PublicSingleChoiceQuestionPresentation
+  | PublicTrueFalseQuestionPresentation;
+
+export interface PrivateSingleChoiceScoringData {
+  questionId: string;
+  questionType: 'single_choice';
+  correctOptionId: string;
+}
+
+export interface PrivateTrueFalseScoringData {
+  questionId: string;
+  questionType: 'true_false_multistatement';
+  correctAnswers: Record<'a' | 'b' | 'c' | 'd', boolean>;
+}
+
+export type PrivateQuestionScoringData =
+  | PrivateSingleChoiceScoringData
+  | PrivateTrueFalseScoringData;
+
+export interface TrustedQuestionRecord {
+  presentation: PublicQuestionPresentation;
+  scoring: PrivateQuestionScoringData;
+}
+
 export interface Question {
   id: string;
   questionType: QuestionType;

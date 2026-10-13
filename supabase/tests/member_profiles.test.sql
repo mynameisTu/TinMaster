@@ -1,6 +1,6 @@
 begin;
 
-select plan(36);
+select plan(37);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -244,14 +244,13 @@ select throws_ok(
   'Avatar upload limit exceeded; try again later',
   'avatar upload reservations are rate-limited'
 );
+reset role;
 select ok(
   not pg_catalog.has_table_privilege(
     'authenticated', 'private.member_avatar_upload_reservations', 'SELECT'
   ),
   'authenticated users cannot read private avatar upload reservations'
 );
-
-reset role;
 update public.profiles
 set avatar_path = id::text || '/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jpg'
 where id = '40000000-0000-0000-0000-000000000001';
@@ -262,14 +261,18 @@ select throws_ok(
   'Avatar cleanup is required before account deletion',
   'account deletion is blocked while an avatar is still attached'
 );
-update public.profiles
-set avatar_path = null
-where id = '40000000-0000-0000-0000-000000000001';
-insert into private.member_avatar_cleanup_queue (user_id, object_name)
-values (
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
   '40000000-0000-0000-0000-000000000001',
-  '40000000-0000-0000-0000-000000000001/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jpg'
+  true
 );
+select is(
+  public.remove_my_avatar(),
+  '40000000-0000-0000-0000-000000000001/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jpg',
+  'the avatar removal RPC returns the previous object path for cleanup'
+);
+reset role;
 select throws_ok(
   $$delete from auth.users
     where id = '40000000-0000-0000-0000-000000000001'$$,

@@ -14,7 +14,12 @@ import {
 } from 'lucide-react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UserRole } from '../types';
-import { updatePassword } from '../services/authService';
+import {
+  updateMyStudentGrade,
+  updatePassword,
+  STUDENT_GRADE_OPTIONS,
+  validateStudentGrade,
+} from '../services/authService';
 import { supabase } from '../services/supabaseClient';
 import {
   createAvatarUrl,
@@ -172,28 +177,40 @@ export function PublicMemberProfilePage({
 
 export function AccountSettingsPage({
   email,
+  grade,
   onBack,
   onSaved,
+  onGradeSaved,
 }: {
   email: string;
+  grade?: 10 | 11 | 12;
   onBack: () => void;
   onSaved: (profile: MemberProfile) => void;
+  onGradeSaved: () => Promise<void>;
 }) {
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [examTrack, setExamTrack] = useState<'ICT' | 'CS' | ''>('');
+  const [selectedGrade, setSelectedGrade] = useState<'10' | '11' | '12' | ''>(
+    () => validateStudentGrade(grade) ? String(grade) as '10' | '11' | '12' : ''
+  );
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [gradeLoading, setGradeLoading] = useState(true);
+  const [gradeLoaded, setGradeLoaded] = useState(false);
+  const [gradeSaving, setGradeSaving] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [gradeError, setGradeError] = useState<string | null>(null);
+  const [gradeSuccess, setGradeSuccess] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
@@ -216,6 +233,36 @@ export function AccountSettingsPage({
         setDisplayName(result.displayName);
         setUsername(result.username ?? '');
         setExamTrack(result.examTrack ?? '');
+        if (result.role === 'student') {
+          try {
+            const { data: gradeRecord, error: gradeLoadError } = await client
+              .from('profiles')
+              .select('grade')
+              .eq('id', result.id)
+              .maybeSingle();
+            if (gradeLoadError || !gradeRecord) {
+              throw new Error('Không thể tải khối lớp đã lưu. Vui lòng tải lại cài đặt.');
+            }
+            setSelectedGrade(
+              validateStudentGrade(gradeRecord.grade)
+                ? String(gradeRecord.grade) as '10' | '11' | '12'
+                : ''
+            );
+            setGradeLoaded(true);
+          } catch (gradeLoadError) {
+            setSelectedGrade('');
+            setGradeError(
+              gradeLoadError instanceof Error
+                ? gradeLoadError.message
+                : 'Không thể tải khối lớp đã lưu. Vui lòng tải lại cài đặt.'
+            );
+          } finally {
+            setGradeLoading(false);
+          }
+        } else {
+          setGradeLoaded(true);
+          setGradeLoading(false);
+        }
         const signedUrl = await createAvatarUrl(client, result.avatarPath);
         if (active) setAvatarUrl(signedUrl);
       })
@@ -231,6 +278,12 @@ export function AccountSettingsPage({
   }, []);
 
   useEffect(() => {
+    setSelectedGrade(
+      validateStudentGrade(grade) ? String(grade) as '10' | '11' | '12' : ''
+    );
+  }, [grade]);
+
+  useEffect(() => {
     if (!selectedImage) {
       setImagePreview(null);
       return;
@@ -241,6 +294,28 @@ export function AccountSettingsPage({
   }, [selectedImage]);
 
   const usernameValidation = useMemo(() => validateUsername(username), [username]);
+
+  const saveGrade = async () => {
+    if (!supabase || !profile || profile.role !== 'student') return;
+    setGradeSaving(true);
+    setGradeError(null);
+    setGradeSuccess(null);
+    try {
+      const gradeToSave = selectedGrade === '' ? null : Number(selectedGrade);
+      const savedGrade = await updateMyStudentGrade(supabase, gradeToSave);
+      setSelectedGrade(
+        savedGrade !== null && savedGrade !== undefined
+          ? (String(savedGrade) as '10' | '11' | '12')
+          : ''
+      );
+      await onGradeSaved();
+      setGradeSuccess(savedGrade ? 'Đã lưu khối lớp.' : 'Đã xóa khối lớp.');
+    } catch (saveError) {
+      setGradeError(saveError instanceof Error ? saveError.message : 'Không thể lưu khối lớp.');
+    } finally {
+      setGradeSaving(false);
+    }
+  };
 
   const saveProfile = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -468,6 +543,45 @@ export function AccountSettingsPage({
                 <option value="ICT">Tin học ứng dụng · ICT</option>
               </select>
             </label>
+
+            {profile.role === 'student' && (
+              <section className="member-field" aria-labelledby="student-grade-label">
+                <h3>Thông tin học tập</h3>
+                <label id="student-grade-label" htmlFor="student-grade">
+                  Khối lớp
+                </label>
+                <select
+                  id="student-grade"
+                  value={selectedGrade}
+                  onChange={(event) => {
+                    setSelectedGrade(event.target.value as '10' | '11' | '12' | '');
+                    setGradeError(null);
+                    setGradeSuccess(null);
+                  }}
+                  disabled={gradeLoading || !gradeLoaded || gradeSaving}
+                >
+                  <option value="">Chưa thiết lập</option>
+                  {STUDENT_GRADE_OPTIONS.map((gradeOption) => (
+                    <option key={gradeOption} value={gradeOption}>
+                      Khối {gradeOption}
+                    </option>
+                  ))}
+                </select>
+                <small>Chỉ dùng để chọn nội dung đánh giá phù hợp, không hiển thị trong hồ sơ công khai.</small>
+                {gradeLoading && <small role="status">Đang tải khối lớp đã lưu…</small>}
+                {gradeError && <small className="member-inline-error" role="alert">{gradeError}</small>}
+                {gradeSuccess && <small className="member-inline-success" role="status">{gradeSuccess}</small>}
+                <button
+                  type="button"
+                  className="member-button member-button-secondary"
+                  disabled={gradeLoading || !gradeLoaded || gradeSaving}
+                  onClick={() => void saveGrade()}
+                >
+                  {gradeSaving ? <LoaderCircle className="member-spin" /> : <Save aria-hidden="true" />}
+                  {gradeSaving ? 'Đang lưu khối lớp…' : 'Lưu khối lớp'}
+                </button>
+              </section>
+            )}
 
             <div className="member-private-id">
               <span>Mã thành viên</span>

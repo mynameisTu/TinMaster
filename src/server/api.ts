@@ -4,6 +4,14 @@ import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
 import { requireSupabaseRole, requireSupabaseUser } from './supabaseAuth';
 import { rateLimitGemini } from './rateLimit';
+import { createDiagnosticAssessmentStartHandler } from './diagnosticStart';
+import {
+  clearDiagnosticAnswerHandler,
+  getDiagnosticAssessmentHandler,
+  getLatestDiagnosticAssessmentResultHandler,
+  saveDiagnosticAnswerHandler,
+  submitDiagnosticAssessmentHandler,
+} from './diagnosticSession';
 import {
   classifyGeminiError,
   generateWithGeminiResilience,
@@ -114,6 +122,43 @@ function registerApiRoutes() {
       geminiConfigured: !!process.env.GEMINI_API_KEY,
     });
   });
+
+  app.post(
+    '/api/diagnostic/assessment/start',
+    requireSupabaseUser,
+    requireSupabaseRole(['student']),
+    createDiagnosticAssessmentStartHandler()
+  );
+  app.get(
+    '/api/diagnostic/assessment/latest-result',
+    requireSupabaseUser,
+    requireSupabaseRole(['student']),
+    getLatestDiagnosticAssessmentResultHandler
+  );
+  app.get(
+    '/api/diagnostic/assessment/:sessionId',
+    requireSupabaseUser,
+    requireSupabaseRole(['student']),
+    getDiagnosticAssessmentHandler
+  );
+  app.post(
+    '/api/diagnostic/assessment/:sessionId/submit',
+    requireSupabaseUser,
+    requireSupabaseRole(['student']),
+    submitDiagnosticAssessmentHandler
+  );
+  app.post(
+    '/api/diagnostic/assessment/:sessionId/answers',
+    requireSupabaseUser,
+    requireSupabaseRole(['student']),
+    saveDiagnosticAnswerHandler
+  );
+  app.delete(
+    '/api/diagnostic/assessment/:sessionId/answers/:questionId',
+    requireSupabaseUser,
+    requireSupabaseRole(['student']),
+    clearDiagnosticAnswerHandler
+  );
 
   // API 2: AI Pedagogical Explanation
   app.post(

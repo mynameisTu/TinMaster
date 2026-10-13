@@ -11,6 +11,11 @@ import { CONCEPTS_LIST } from '../data/curriculumData';
 import { getVerifiedMastery } from '../services/masteryStorage';
 import type { LearningMode } from '../services/learningPreferences';
 import { validateTargetScore } from '../services/authService';
+import {
+  getLatestDiagnosticAssessmentResult,
+  normalizeDiagnosticCompetencyScore,
+} from '../services/diagnosticAssessment';
+import type { DiagnosticAssessmentResult } from '../services/diagnosticAssessment';
 import { LEADERBOARD_EMPTY_STATE } from '../data/leaderboard';
 import { SAMPLE_QUESTION_BANK } from '../data/questionBank';
 import {
@@ -43,6 +48,8 @@ interface StudentDashboardProps {
   canEditTargetScore: boolean;
   showStudentLearningControls: boolean;
   onStartExam: () => void;
+  onStartDiagnosticAssessment?: () => void;
+  diagnosticResultRefreshKey?: number;
   onSelectTrack?: (track: ExamTrack) => void;
   onOpenTrackModal?: () => void;
   onStartAdaptivePractice: (recommendation?: AdaptiveRecommendation) => void;
@@ -64,6 +71,14 @@ export function showTargetScoreDialog(
   setEditing(true);
 }
 
+export function startDiagnosticAssessmentFlow(
+  onStartAssessment: (() => void) | undefined
+): boolean {
+  if (!onStartAssessment) return false;
+  onStartAssessment();
+  return true;
+}
+
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   user,
   masteries,
@@ -77,6 +92,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   canEditTargetScore,
   showStudentLearningControls,
   onStartExam,
+  onStartDiagnosticAssessment,
+  diagnosticResultRefreshKey = 0,
   onSelectTrack,
   onOpenTrackModal,
   onStartAdaptivePractice,
@@ -94,10 +111,41 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [modeSaving, setModeSaving] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
   const [modeSuccess, setModeSuccess] = useState<string | null>(null);
+  const [competencyLoadState, setCompetencyLoadState] = useState<
+    'loading' | 'empty' | 'ready' | 'error'
+  >(() => user.role === 'student' ? 'loading' : 'empty');
+  const [competencyResult, setCompetencyResult] = useState<DiagnosticAssessmentResult | null>(null);
+  const [competencyRetryKey, setCompetencyRetryKey] = useState(0);
   const hasValidTarget = validateTargetScore(user.targetScore) === null;
   const targetDialogRef = useRef<HTMLDialogElement>(null);
   const targetScoreSelectRef = useRef<HTMLSelectElement>(null);
   const targetEditButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (user.role !== 'student') {
+      setCompetencyResult(null);
+      setCompetencyLoadState('empty');
+      return;
+    }
+    let current = true;
+    setCompetencyLoadState('loading');
+    getLatestDiagnosticAssessmentResult()
+      .then(({ result }) => {
+        if (!current) return;
+        setCompetencyResult(result);
+        setCompetencyLoadState(
+          normalizeDiagnosticCompetencyScore(result) !== null ? 'ready' : 'empty'
+        );
+      })
+      .catch(() => {
+        if (!current) return;
+        setCompetencyResult(null);
+        setCompetencyLoadState('error');
+      });
+    return () => {
+      current = false;
+    };
+  }, [user.id, user.role, diagnosticResultRefreshKey, competencyRetryKey]);
 
   useEffect(() => {
     setSelectedTarget(
@@ -274,6 +322,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
             <span>Micro-Quiz 5p</span>
           </button>
+          {onStartDiagnosticAssessment && (
+            <button
+              type="button"
+              onClick={onStartDiagnosticAssessment}
+              className="btn-secondary text-xs whitespace-nowrap py-2 px-3.5 cursor-pointer"
+              title="Bắt đầu bài đánh giá có lưu tiến trình trong 25 phút"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-teal-700" />
+              <span>Bắt đầu đánh giá</span>
+            </button>
+          )}
           <button
             onClick={() => onOpenVideoModal()}
             className="btn-secondary text-xs whitespace-nowrap py-2 px-3.5 cursor-pointer"
@@ -551,6 +610,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   Chưa có mô hình dự đoán được kiểm chứng
                 </span>
               </div>
+              <DiagnosticCompetencyMetric
+                state={competencyLoadState}
+                score={normalizeDiagnosticCompetencyScore(competencyResult)}
+                onRetry={() => setCompetencyRetryKey((key) => key + 1)}
+                onStartAssessment={onStartDiagnosticAssessment}
+                canStartAssessment={user.role === 'student'}
+              />
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-slate-600 font-medium">Mục tiêu điểm thi:</span>
@@ -811,3 +877,113 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     </div>
   );
 };
+
+export function DiagnosticCompetencyMetric({
+  state,
+  score,
+  onRetry,
+  onStartAssessment,
+  canStartAssessment,
+}: {
+  state: 'loading' | 'empty' | 'ready' | 'error';
+  score: number | null;
+  onRetry: () => void;
+  onStartAssessment?: () => void;
+  canStartAssessment: boolean;
+}) {
+  const [startError, setStartError] = useState<string | null>(null);
+  const hasScore = state === 'ready' && score !== null;
+
+  return (
+    <section aria-label="Điểm năng lực hiện tại" className="space-y-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-slate-600 font-medium">Điểm năng lực hiện tại:</span>
+        {state === 'loading' ? (
+          <span role="status" className="font-mono text-sm font-semibold text-slate-400">
+            Đang tải…
+          </span>
+        ) : state === 'error' ? (
+          <span className="flex items-center gap-2">
+            <span role="alert" className="text-xs font-medium text-rose-700">
+              Không thể tải
+            </span>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="text-xs font-medium text-teal-800 underline underline-offset-2 hover:text-teal-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700"
+            >
+              Thử lại
+            </button>
+          </span>
+        ) : hasScore ? (
+          <span className="font-mono text-lg font-bold tabular-nums text-slate-900">
+            {score.toFixed(1)} / 10
+          </span>
+        ) : (
+          <span className="font-mono text-sm font-semibold text-slate-500">
+            Chưa đánh giá
+          </span>
+        )}
+      </div>
+      {state === 'empty' && (
+        <div className="flex flex-col items-start gap-1.5">
+          <button
+            type="button"
+            disabled={!canStartAssessment || !onStartAssessment}
+            onClick={() => {
+              setStartError(null);
+              if (!startDiagnosticAssessmentFlow(onStartAssessment)) {
+                setStartError('Bài đánh giá hiện chưa khả dụng cho tài khoản này.');
+              }
+            }}
+            className="btn-secondary cursor-pointer px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Làm bài đánh giá
+          </button>
+          {!canStartAssessment && (
+            <p className="text-xs text-slate-500">
+              Bài đánh giá chỉ dành cho tài khoản học sinh.
+            </p>
+          )}
+          {canStartAssessment && !onStartAssessment && (
+            <p className="text-xs text-slate-500">
+              Hãy đăng nhập bằng tài khoản học sinh để bắt đầu đánh giá.
+            </p>
+          )}
+          {startError && <p role="alert" className="text-xs text-rose-700">{startError}</p>}
+        </div>
+      )}
+      {state === 'error' && (
+        <>
+          <p className="text-[11px] text-slate-500">
+            Kết quả chưa tải được; điểm mục tiêu không được dùng thay thế.
+          </p>
+          {canStartAssessment && (
+            <button
+              type="button"
+              disabled={!onStartAssessment}
+              onClick={() => {
+                setStartError(null);
+                if (!startDiagnosticAssessmentFlow(onStartAssessment)) {
+                  setStartError('Bài đánh giá hiện chưa khả dụng cho tài khoản này.');
+                }
+              }}
+              className="btn-secondary cursor-pointer px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Làm bài đánh giá
+            </button>
+          )}
+          {canStartAssessment && !onStartAssessment && (
+            <p className="text-xs text-slate-500">
+              Hãy đăng nhập bằng tài khoản học sinh để bắt đầu đánh giá.
+            </p>
+          )}
+          {startError && <p role="alert" className="text-xs text-rose-700">{startError}</p>}
+        </>
+      )}
+      {state === 'empty' && !canStartAssessment && (
+        <p className="text-[11px] text-slate-500">Chưa có kết quả đánh giá.</p>
+      )}
+    </section>
+  );
+}
